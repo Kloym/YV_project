@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "yv-project"
+version = "0.1.0"
+description = ""
+authors = ["Kloym <oleg.petr1223@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+pandas = "^3.0.2"
+dash = "^4.1.0"
+plotly = "^6.7.0"
+dash-bootstrap-components = "^2.0.4"
+openpyxl = "^3.1.5"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
