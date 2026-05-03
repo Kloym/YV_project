@@ -187,6 +187,47 @@ app.index_string = '''
             /* Иконка стрелочки и крестик */
             .Select-clear-zone { color: var(--text-muted) !important; }
             .Select-arrow { border-color: var(--text-muted) transparent transparent !important; }
+            
+            /* --- ДИЗАЙН SQL ПЕСОЧНИЦЫ --- */
+            .sql-editor {
+                font-family: 'Courier New', Courier, monospace !important;
+                background-color: #1e1e1e !important;
+                color: #d4d4d4 !important;
+                border-radius: 16px !important;
+                border: 2px solid var(--grid-color) !important;
+                padding: 15px !important;
+                width: 100% !important;
+                min-height: 140px !important;
+                resize: vertical !important;
+                transition: all 0.3s ease;
+                font-size: 14px;
+            }
+            
+            .sql-editor:focus {
+                border-color: var(--primary) !important;
+                outline: none !important;
+                box-shadow: 0 0 0 4px var(--primary-light) !important;
+            }
+            
+            .schema-badge {
+                background-color: var(--bg-color);
+                color: var(--text-main);
+                padding: 8px 14px;
+                border-radius: 10px;
+                font-size: 13px;
+                font-weight: 600;
+                display: inline-block;
+                margin: 4px;
+                border: 1px solid var(--grid-color);
+                transition: all 0.3s;
+            }
+            
+            .schema-badge:hover {
+                background-color: var(--primary-light);
+                color: var(--primary);
+                border-color: var(--primary);
+                cursor: default;
+            }
         </style>
     </head>
     <body>
@@ -240,6 +281,69 @@ def get_optimized_data() -> pd.DataFrame:
     _CACHE["last_modified"] = current_mtime
     
     return df
+
+
+# --- ЕДИНАЯ ФУНКЦИЯ ГРАФИКА ---
+def apply_beautiful_layout(fig: go.Figure, theme: str, x_range=None, tickvals=None, ticktext=None) -> go.Figure:
+    """
+    Единая функция для применения красивого дизайна ко всем графикам.
+    Впитывает в себя настройки отступов, легенды, сетки и темной/светлой темы.
+    """
+    if theme == "dark": 
+        text_color, grid_color, card_bg = "#ffffff", "#1b254b", "#111c44"
+    else: 
+        text_color, grid_color, card_bg = "#1b2559", "#e9edf7", "#ffffff"
+
+    xaxis_config = dict(
+        showgrid=False, 
+        color=text_color, 
+        showline=True, 
+        linecolor=grid_color, 
+        linewidth=2,
+        automargin=True
+    )
+
+    if x_range is not None:
+        xaxis_config['range'] = x_range
+    if tickvals is not None and ticktext is not None:
+        xaxis_config['tickmode'] = 'array'
+        xaxis_config['tickvals'] = tickvals
+        xaxis_config['ticktext'] = ticktext
+        
+    fig.update_layout(
+        font_family="Inter", 
+        separators=", ",
+        plot_bgcolor="rgba(0,0,0,0)", 
+        paper_bgcolor="rgba(0,0,0,0)", 
+        margin=dict(l=10, r=10, t=30, b=10),
+        legend=dict(
+            orientation="h", 
+            yanchor="bottom", 
+            y=1.05, 
+            xanchor="right", 
+            x=1, 
+            font=dict(color=text_color, size=13)
+        ),
+        xaxis=xaxis_config,
+        yaxis=dict(
+            showgrid=True, 
+            gridcolor=grid_color, 
+            zeroline=False, 
+            color=text_color,
+            automargin=True
+        ),
+        hoverlabel=dict(
+            bgcolor=card_bg, 
+            font_size=14, 
+            font_family="Inter", 
+            font_color=text_color, 
+            bordercolor=grid_color
+        ),
+        hovermode="x unified",
+        barmode="group"
+    )
+    return fig
+
 
 # UI КОМПОНЕНТЫ
 
@@ -307,8 +411,6 @@ app.layout = html.Div([
     dcc.Store(id="theme-store", data="light"),
 
     html.Div([
-        
-        # Логотип
         html.Div([
             html.I(className="fas fa-heartbeat", style={"color": "var(--primary)", "fontSize": "32px", "marginRight": "12px"}),
             html.H3("Clinical AI", style={"color": "var(--text-main)", "fontWeight": "800", "margin": 0, "letterSpacing": "-1px", "transition": "color 0.3s"})
@@ -395,8 +497,7 @@ app.layout = html.Div([
     }),
 
     html.Div([
-        
-        # Шапка с кнопкой темы и профилем пользователя
+
         dbc.Row([
             dbc.Col(html.H2("Dashboard Overview", style={"fontWeight": "800", "color": "var(--text-main)", "letterSpacing": "-1px", "transition": "color 0.3s"}), width=8),
             dbc.Col(
@@ -443,7 +544,7 @@ app.layout = html.Div([
         dbc.Row([
             dbc.Col(
                 html.Div([
-                    html.H4("Аналитика по времени", style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "30px", "letterSpacing": "-0.5px"}),
+                    html.H4("Аналитика по времени", id="main-chart-title", style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "30px", "letterSpacing": "-0.5px"}),
                     dcc.Graph(id="main-line-chart", config={'displayModeBar': False}, style={"height": "480px"})
                 ], style={
                     "backgroundColor": "var(--card-bg)", 
@@ -454,7 +555,65 @@ app.layout = html.Div([
                 }), 
                 width=12
             )
-        ])
+        ]),
+
+        # --- НОВЫЙ БЛОК: SQL ---
+        dbc.Row([
+            dbc.Col(
+                html.Div([
+                    html.H4([html.I(className="fas fa-terminal", style={"marginRight": "12px", "color": "var(--primary)"}), "SQL-Песочница"], style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px", "letterSpacing": "-0.5px"}),
+                    html.P("Напишите SQL-запрос. При выполнении программа перерисует верхний главный график! (Первая колонка станет осью X, числовые колонки — осью Y).", style={"color": "var(--text-muted)", "fontSize": "14px", "marginBottom": "20px"}),
+                    
+                    dcc.Textarea(
+                        id="sql-input",
+                        className="sql-editor",
+                        placeholder="Введите ваш SQL запрос здесь...",
+                        value="SELECT \n  [Наименование отделения], \n  COUNT(*) as [Количество услуг] \nFROM medical_data \nGROUP BY [Наименование отделения] \nORDER BY [Количество услуг] DESC \nLIMIT 7;"
+                    ),
+                    
+                    dbc.Button(
+                        [html.I(className="fas fa-play", style={"marginRight": "10px"}), "Нарисовать график из SQL"], 
+                        id="btn-execute-sql", 
+                        style={"backgroundColor": "var(--primary)", "border": "none", "borderRadius": "12px", "padding": "12px 24px", "fontWeight": "600", "marginTop": "15px", "boxShadow": "0px 8px 15px rgba(67, 24, 255, 0.2)"}
+                    ),
+                    
+                    html.Div(id="sql-error", style={"color": "#E11D48", "marginTop": "15px", "fontWeight": "600", "fontSize": "14px"}),
+                ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)", "transition": "all 0.3s", "height": "100%"}), 
+                xl=8, lg=12, className="mb-4"
+            ),
+
+            # Шпаргалка по базе данных
+            dbc.Col(
+                html.Div([
+                    html.H5([html.I(className="fas fa-database", style={"marginRight": "10px", "color": "#01B574"}), "Схема Данных"], style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "25px"}),
+                    
+                    html.Div([
+                        html.Span("Таблица:", style={"color": "var(--text-muted)", "fontSize": "13px", "fontWeight": "600", "textTransform": "uppercase", "marginRight": "10px"}),
+                        html.Span("medical_data", style={"color": "var(--primary)", "fontWeight": "700", "fontSize": "16px", "backgroundColor": "var(--primary-light)", "padding": "4px 10px", "borderRadius": "8px"})
+                    ], style={"marginBottom": "25px"}),
+                    
+                    html.P("Доступные колонки:", style={"color": "var(--text-muted)", "fontSize": "13px", "fontWeight": "600", "textTransform": "uppercase", "marginBottom": "15px"}),
+                    
+                    html.Div([
+                        html.Span("Период", className="schema-badge"),
+                        html.Span("Наименование отделения", className="schema-badge"),
+                        html.Span("Код Услуги", className="schema-badge"),
+                        html.Span("Наименование профиля", className="schema-badge"),
+                        html.Span("ИД пациента в версии счета", className="schema-badge"),
+                        html.Span("Сумма", className="schema-badge")
+                    ]),
+                    
+                    html.Div([
+                        html.I(className="fas fa-info-circle", style={"marginRight": "8px", "color": "var(--text-muted)"}),
+                        html.Span("Если в названии колонки есть пробелы, оборачивайте её в квадратные скобки: ", style={"color": "var(--text-muted)"}),
+                        html.Code("[Наименование отделения]", style={"color": "var(--text-main)", "fontWeight": "600"})
+                    ], style={"marginTop": "30px", "fontSize": "13px", "backgroundColor": "var(--bg-color)", "padding": "15px", "borderRadius": "12px", "border": "1px solid var(--grid-color)"})
+                    
+                ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)", "transition": "all 0.3s", "height": "100%"}), 
+                xl=4, lg=12, className="mb-4"
+            )
+        ], className="mt-4")
+
     ], style={"marginLeft": "340px", "padding": "40px 50px", "minHeight": "100vh"})
 ])
 
@@ -530,20 +689,21 @@ def update_smart_filters(years, months, depts, mes_list):
 
 
 @app.callback(
-    [Output("main-line-chart", "figure"), Output("kpi-sum", "children"),
-     Output("kpi-patients", "children"), Output("kpi-mes", "children"), Output("kpi-depts", "children")],
+    [Output("main-line-chart", "figure"), Output("main-chart-title", "children"),
+     Output("kpi-sum", "children"), Output("kpi-patients", "children"), 
+     Output("kpi-mes", "children"), Output("kpi-depts", "children")],
     [Input("f-year", "value"), Input("f-month", "value"),
      Input("f-dept", "value"), Input("f-mes", "value"), 
      Input("f-metric", "value"), Input("f-group-by", "value"), Input("theme-store", "data")]
 )
-def update_dashboard(years, months, depts, mes_list, metric, group_by_col, theme):
+def update_standard_dashboard(years, months, depts, mes_list, metric, group_by_col, theme):
     """
     Основной метод отрисовки Дашборда. 
     Рассчитывает показатели и строит график на основе выбранных метрик и группировок.
     """
     df = get_optimized_data()
     if df.empty: 
-        return go.Figure(), "0,00 ₽", "0", "0", "0"
+        return go.Figure(), "Аналитика по времени", "0,00 ₽", "0", "0", "0"
 
     mask = pd.Series(True, index=df.index)
     if years and 'Year' in df.columns: 
@@ -627,54 +787,119 @@ def update_dashboard(years, months, depts, mes_list, metric, group_by_col, theme
                 hovertemplate=hover_template
             ))
 
-    if theme == "dark": 
-        text_color, grid_color, card_bg = "#ffffff", "#1b254b", "#111c44"
-    else: 
-        text_color, grid_color, card_bg = "#1b2559", "#e9edf7", "#ffffff"
-    
-    fig.update_layout(
-        font_family="Inter", 
-        separators=", ",
-        plot_bgcolor="rgba(0,0,0,0)", 
-        paper_bgcolor="rgba(0,0,0,0)", 
-        margin=dict(l=0, r=0, t=10, b=10),
-        legend=dict(
-            orientation="h", 
-            yanchor="bottom", 
-            y=1.05, 
-            xanchor="right", 
-            x=1, 
-            font=dict(color=text_color, size=13)
-        ),
-        xaxis=dict(
-            showgrid=False, 
-            color=text_color, 
-            range=x_range, 
-            showline=True, 
-            linecolor=grid_color, 
-            linewidth=2, 
-            tickmode='array', 
-            tickvals=tickvals, 
-            ticktext=ticktext
-        ),
-        yaxis=dict(
-            showgrid=True, 
-            gridcolor=grid_color, 
-            zeroline=False, 
-            color=text_color
-        ),
-        hoverlabel=dict(
-            bgcolor=card_bg, 
-            font_size=14, 
-            font_family="Inter", 
-            font_color=text_color, 
-            bordercolor=grid_color
-        ),
-        hovermode="x unified"
-    )
+    fig = apply_beautiful_layout(fig, theme, x_range, tickvals, ticktext)
 
-    return fig, total_sum, total_patients, total_mes, active_depts
+    return fig, "Аналитика по времени (Стандартный режим)", total_sum, total_patients, total_mes, active_depts
 
+
+@app.callback(
+    [Output("main-line-chart", "figure", allow_duplicate=True), 
+     Output("main-chart-title", "children", allow_duplicate=True),
+     Output("sql-error", "children")],
+    Input("btn-execute-sql", "n_clicks"),
+    [State("sql-input", "value"), State("theme-store", "data")],
+    prevent_initial_call=True
+)
+def execute_custom_sql(n_clicks, query, theme):
+    """
+    Выполняет кастомный SQL-запрос и переписывает главный график.
+    Работает через in-memory базу, чтобы использовать очищенные колонки.
+    """
+    if not query or not query.strip():
+        return dash.no_update, dash.no_update, ""
+
+    try:
+        df = get_optimized_data()
+        
+        conn = sqlite3.connect(':memory:')
+        df.to_sql('medical_data', conn, index=False, if_exists='replace')
+        df_sql = pd.read_sql(query, conn)
+        conn.close()
+
+        if df_sql.empty:
+            return dash.no_update, dash.no_update, "✅ Запрос выполнен успешно, но вернул пустой результат (0 строк)."
+
+        fig = go.Figure()
+        x_col = df_sql.columns[0] 
+
+        colors = [
+            {"hex": "#4318FF", "rgba": "rgba(67, 24, 255, 0.15)"}, 
+            {"hex": "#FF7D00", "rgba": "rgba(255, 125, 0, 0.15)"},
+            {"hex": "#01B574", "rgba": "rgba(1, 181, 116, 0.15)"}, 
+            {"hex": "#39B8FF", "rgba": "rgba(57, 184, 255, 0.15)"},
+            {"hex": "#E11D48", "rgba": "rgba(225, 29, 72, 0.15)"}, 
+            {"hex": "#8B5CF6", "rgba": "rgba(139, 92, 246, 0.15)"}
+        ]
+        
+        color_idx = 0
+        has_numeric = False
+        max_y_value = 0 
+
+        for col in df_sql.columns[1:]:
+            if pd.api.types.is_numeric_dtype(df_sql[col]):
+                has_numeric = True
+                
+                current_max = df_sql[col].max()
+                if current_max > max_y_value:
+                    max_y_value = current_max
+
+                c = colors[color_idx % len(colors)]
+
+                col_name_lower = str(col).lower()
+                is_currency = "сумм" in col_name_lower or "sum" in col_name_lower
+
+                has_decimals = pd.api.types.is_float_dtype(df_sql[col]) and not (df_sql[col].dropna() % 1 == 0).all()
+                
+                if is_currency or has_decimals:
+                    y_format = "%{y:,.2f}"
+                    if is_currency:
+                        y_format += " ₽"
+                else:
+                    y_format = "%{y:,.0f}"
+                
+                fig.add_trace(go.Scatter(
+                    x=df_sql[x_col],
+                    y=df_sql[col],
+                    name=str(col),
+                    mode='lines+markers',
+                    cliponaxis=False, 
+                    line=dict(width=4, shape='linear', color=c["hex"]),
+                    marker=dict(size=12, color=c["hex"], line=dict(width=3, color="#ffffff" if theme=="light" else "#111c44")),
+                    fill='tozeroy',
+                    fillcolor=c["rgba"],
+                    hovertemplate=f"<b>%{{x}}</b><br><b>{str(col)}:</b> {y_format}<extra></extra>"
+                ))
+                color_idx += 1
+
+        if not has_numeric:
+             return dash.no_update, dash.no_update, "⚠️ Для построения графика нужна хотя бы одна числовая колонка в результате."
+
+        def format_label(label, max_len=35):
+            s = str(label)
+            if len(s) > max_len:
+                words = s.split()
+                if len(words) > 2:
+                    mid = len(words) // 2
+                    s = " ".join(words[:mid]) + "<br>" + " ".join(words[mid:])
+                if len(s) > max_len * 2:
+                    s = s[:max_len*2] + "..."
+            return s
+            
+        tickvals = df_sql[x_col].tolist()
+        ticktext = [format_label(val) for val in df_sql[x_col]]
+        
+        x_range = [-0.5, len(df_sql) - 0.5]
+        y_padding = max_y_value * 0.05 if max_y_value > 0 else 10
+
+        fig = apply_beautiful_layout(fig, theme, x_range=x_range, tickvals=tickvals, ticktext=ticktext)
+        
+        fig.update_yaxes(range=[-y_padding, max_y_value + y_padding])
+        fig.update_layout(xaxis_tickangle=-30)
+
+        return fig, "Аналитика по времени (SQL Режим 👨‍💻)", ""
+
+    except Exception as e:
+        return dash.no_update, dash.no_update, f"❌ Ошибка в запросе: {str(e)}"
 
 @app.callback(
     Output("download-xlsx", "data"),
