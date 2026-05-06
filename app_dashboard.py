@@ -54,18 +54,20 @@ app.index_string = '''
         {%favicon%}
         {%css%}
         <style>
+            /* --- БАЗОВЫЕ ПЕРЕМЕННЫЕ (СВЕТЛАЯ ТЕМА) --- */
             :root {
                 --bg-color: #f4f7fe;
                 --card-bg: #ffffff;
                 --text-main: #1b2559;
                 --text-muted: #a3aed1;
                 --grid-color: #e9edf7;
-                --primary: #4318FF;
-                --primary-light: rgba(67, 24, 255, 0.1);
                 --shadow: 0px 18px 40px rgba(112, 144, 176, 0.12);
                 --sidebar-shadow: 14px 17px 40px 4px rgba(112, 144, 176, 0.08);
+                --primary: #4318FF;
+                --primary-light: rgba(67, 24, 255, 0.1);
             }
 
+            /* --- ПЕРЕМЕННЫЕ (ТЕМНАЯ ТЕМА) --- */
             [data-theme="dark"] {
                 --bg-color: #0b1437;
                 --card-bg: #111c44;
@@ -144,7 +146,7 @@ app.index_string = '''
                 cursor: default; 
             }
             
-            /* Стили для PDF экспорта: скрываем элементы интерфейса при сохранении PDF */
+            /* Стили для PDF экспорта */
             @media print {
                 .no-print { display: none !important; }
                 body { background-color: white !important; }
@@ -154,7 +156,59 @@ app.index_string = '''
     </head>
     <body>
         <div id="app-container">{%app_entry%}</div>
-        <footer>{%config%}{%scripts%}{%renderer%}</footer>
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+            
+            <!-- СКРИПТ ДЛЯ ПОВЕДЕНИЯ РЕДАКТОРА КОДА -->
+            <script>
+                document.addEventListener('keydown', function(e) {
+                    if (e.target && e.target.classList.contains('sql-editor')) {
+                        
+                        var start = e.target.selectionStart;
+                        var end = e.target.selectionEnd;
+                        var value = e.target.value;
+                        var selectedText = value.substring(start, end);
+
+                        // --- 1. ОБРАБОТКА НАЖАТИЯ TAB ---
+                        if (e.key === 'Tab') {
+                            e.preventDefault(); // Запрещаем переключать фокус
+                            var spaces = "    "; // 4 пробела
+                            
+                            // Используем execCommand, чтобы браузер запомнил это действие для Ctrl+Z
+                            document.execCommand('insertText', false, spaces);
+                        }
+                        
+                        // --- 2. АВТОМАТИЧЕСКОЕ ЗАКРЫТИЕ СКОБОК И КАВЫЧЕК ---
+                        const bracketsMap = {
+                            '[': ']',
+                            '(': ')',
+                            '{': '}',
+                            "'": "'",
+                            '"': '"'
+                        };
+
+                        if (bracketsMap[e.key]) {
+                            e.preventDefault(); 
+                            
+                            var insertText = e.key + selectedText + bracketsMap[e.key];
+                            
+                            // Вставляем текст, сохраняя поддержку нативного Ctrl+Z
+                            document.execCommand('insertText', false, insertText);
+                            
+                            // Возвращаем курсор в правильное место
+                            if (selectedText.length > 0) {
+                                e.target.selectionStart = start + 1;
+                                e.target.selectionEnd = end + 1;
+                            } else {
+                                e.target.selectionStart = e.target.selectionEnd = start + 1;
+                            }
+                        }
+                    }
+                });
+            </script>
+        </footer>
     </body>
 </html>
 '''
@@ -528,66 +582,123 @@ app.layout = html.Div([
 
             # БЛОК: SQL Песочница
             dbc.Row(
-                className="mt-4 no-print",
-                children=[
-                    dbc.Col(
-                        html.Div([
-                            html.H4([html.I(className="fas fa-terminal", style={"marginRight": "12px", "color": "var(--primary)"}), "SQL-Песочница (DuckDB)"], style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px"}),
-                            html.P("Напишите SQL-запрос. Работает через сверхбыстрый In-Memory движок.", style={"color": "var(--text-muted)", "fontSize": "14px", "marginBottom": "20px"}),
-                            dcc.Textarea(
-                                id="sql-input", 
-                                className="sql-editor", 
-                                placeholder="Введите ваш SQL запрос...", 
-                                value="SELECT \n  [Наименование отделения], \n  COUNT(*) as [Количество услуг] \nFROM medical_data \nGROUP BY [Наименование отделения] \nORDER BY [Количество услуг] DESC \nLIMIT 7;"
-                            ),
-                            dbc.Button(
-                                [html.I(className="fas fa-play", style={"marginRight": "10px"}), "Выполнить SQL"], 
-                                id="btn-execute-sql", 
-                                style={"backgroundColor": "var(--primary)", "border": "none", "borderRadius": "12px", "padding": "12px 24px", "fontWeight": "600", "marginTop": "15px"}
-                            ),
-                            html.Div(id="sql-error", style={"color": "#E11D48", "marginTop": "15px", "fontWeight": "600", "fontSize": "14px"}),
-                        ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)", "height": "100%"}), 
-                        xl=8, lg=12, className="mb-4"
-                    ),
-                    dbc.Col(
-                        html.Div([
-                            html.H5([html.I(className="fas fa-database", style={"marginRight": "10px", "color": "#01B574"}), "Схема Данных"], style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "25px"}),
-                            
-                            html.Div([
-                                html.Span("Таблица:", style={"color": "var(--text-muted)", "fontSize": "13px", "fontWeight": "600", "textTransform": "uppercase", "marginRight": "10px"}),
-                                html.Span("medical_data", style={"color": "var(--primary)", "fontWeight": "700", "fontSize": "16px", "backgroundColor": "var(--primary-light)", "padding": "4px 10px", "borderRadius": "8px"})
-                            ], style={"marginBottom": "25px"}),
-                            
-                            html.P("Доступные колонки:", style={"color": "var(--text-muted)", "fontSize": "13px", "fontWeight": "600", "textTransform": "uppercase", "marginBottom": "15px"}),
-                            
-                            html.Div([
-                                html.Span("Период", className="schema-badge"), 
-                                html.Span("Наименование отделения", className="schema-badge"), 
-                                html.Span("Код Услуги", className="schema-badge"), 
-                                html.Span("Наименование профиля", className="schema-badge"), 
-                                html.Span("ИД пациента в версии счета", className="schema-badge"), 
-                                html.Span("Сумма", className="schema-badge")
-                            ]),
-                            
-                            html.Div([
-                                html.I(className="fas fa-info-circle", style={"marginRight": "8px", "color": "var(--text-muted)"}),
-                                html.Span("Если в названии колонки есть пробелы, оборачивайте её в квадратные скобки: ", style={"color": "var(--text-muted)"}),
-                                html.Code("[Наименование отделения]", style={"color": "var(--text-main)", "fontWeight": "600"})
-                            ], style={"marginTop": "30px", "fontSize": "13px", "backgroundColor": "var(--bg-color)", "padding": "15px", "borderRadius": "12px", "border": "1px solid var(--grid-color)"})
-                            
-                        ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)", "height": "100%"}), 
-                        xl=4, lg=12, className="mb-4"
-                    )
-                ]
-            )
-        ]
-    ),
+            className="mt-4 no-print", 
+            children=[
+                dbc.Col(
+                    html.Div([
+                        html.H4(
+                            [html.I(className="fas fa-terminal", style={"marginRight": "12px", "color": "var(--primary)"}), "SQL-Песочница (DuckDB)"], 
+                            style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px"}
+                        ),
+                        html.P(
+                            "Напишите ваш SQL-запрос.", 
+                            style={"color": "var(--text-muted)", "fontSize": "14px", "marginBottom": "20px"}
+                        ),
 
-    # МОДАЛЬНОЕ МОДАЛЬНОЕ ОКНО
+                        html.Div(
+                            style={"position": "relative", "width": "100%"},
+                            children=[
+                                dcc.Textarea(
+                                    id="sql-input", 
+                                    className="sql-editor", 
+                                    style={
+                                        "resize": "none",
+                                        "paddingRight": "50px"
+                                    },
+                                    placeholder="Введите ваш SQL запрос...", 
+                                    value="SELECT \n  [Наименование отделения], \n  COUNT(*) as [Количество услуг] \nFROM medical_data \nGROUP BY [Наименование отделения] \nORDER BY [Количество услуг] DESC \nLIMIT 7;"
+                                ),
+                                html.Button(
+                                    html.I(className="fas fa-expand"), 
+                                    id="btn-expand-sql", 
+                                    title="Полноэкранный редактор",
+                                    style={
+                                        "position": "absolute", 
+                                        "top": "12px", 
+                                        "right": "12px", 
+                                        "background": "rgba(255, 255, 255, 0.05)", 
+                                        "border": "none", 
+                                        "borderRadius": "8px",
+                                        "padding": "8px",
+                                        "color": "#a3aed1", 
+                                        "fontSize": "18px", 
+                                        "cursor": "pointer",
+                                        "transition": "all 0.3s"
+                                    }
+                                )
+                            ]
+                        ),
+                        
+                        dbc.Button(
+                            [html.I(className="fas fa-play", style={"marginRight": "10px"}), "Выполнить SQL"], 
+                            id="btn-execute-sql", 
+                            style={
+                                "backgroundColor": "var(--primary)", 
+                                "border": "none", 
+                                "borderRadius": "12px", 
+                                "padding": "12px 24px", 
+                                "fontWeight": "600", 
+                                "marginTop": "15px"
+                            }
+                        ),
+                        
+                        html.Div(
+                            id="sql-error", 
+                            style={"color": "#E11D48", "marginTop": "15px", "fontWeight": "600", "fontSize": "14px"}
+                        ),
+                        
+                    ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)", "height": "100%"}), 
+                    xl=8, lg=12, className="mb-4"
+                ),
+                
+                # Шпаргалка по базе данных
+                dbc.Col(
+                    html.Div([
+                        html.H5(
+                            [html.I(className="fas fa-database", style={"marginRight": "10px", "color": "#01B574"}), "Схема Данных"], 
+                            style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "25px"}
+                        ),
+                        
+                        html.Div([
+                            html.Span("Таблица:", style={"color": "var(--text-muted)", "fontSize": "13px", "fontWeight": "600", "textTransform": "uppercase", "marginRight": "10px"}),
+                            html.Span("medical_data", style={"color": "var(--primary)", "fontWeight": "700", "fontSize": "16px", "backgroundColor": "var(--primary-light)", "padding": "4px 10px", "borderRadius": "8px"})
+                        ], style={"marginBottom": "25px"}),
+                        
+                        html.P(
+                            "Доступные колонки:", 
+                            style={"color": "var(--text-muted)", "fontSize": "13px", "fontWeight": "600", "textTransform": "uppercase", "marginBottom": "15px"}
+                        ),
+                        
+                        html.Div([
+                            html.Span("Период", className="schema-badge"), 
+                            html.Span("Наименование отделения", className="schema-badge"), 
+                            html.Span("Код Услуги", className="schema-badge"), 
+                            html.Span("Наименование профиля", className="schema-badge"), 
+                            html.Span("ИД пациента в версии счета", className="schema-badge"), 
+                            html.Span("Сумма", className="schema-badge")
+                        ]),
+                        
+                        html.Div([
+                            html.I(className="fas fa-info-circle", style={"marginRight": "8px", "color": "var(--text-muted)"}),
+                            html.Span("Если в названии колонки есть пробелы, оборачивайте её в квадратные скобки: ", style={"color": "var(--text-muted)"}),
+                            html.Code("[Наименование отделения]", style={"color": "var(--text-main)", "fontWeight": "600"})
+                        ], style={"marginTop": "30px", "fontSize": "13px", "backgroundColor": "var(--bg-color)", "padding": "15px", "borderRadius": "12px", "border": "1px solid var(--grid-color)"})
+                        
+                    ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)", "height": "100%"}), 
+                    xl=4, lg=12, className="mb-4"
+                )
+            ]
+        )
+    ]),
+
     dbc.Modal(
         [
-            dbc.ModalHeader(dbc.ModalTitle("Расширенная информация", id="modal-title", style={"fontWeight": "800", "color": "var(--primary)"})),
-            dbc.ModalBody(id="modal-body", style={"padding": "25px"}),
+            dbc.ModalHeader(
+                dbc.ModalTitle("Расширенная информация", id="modal-title", style={"fontWeight": "800", "color": "var(--primary)"})
+            ),
+            dbc.ModalBody(
+                id="modal-body", style={"padding": "25px"}
+            ),
             dbc.ModalFooter(
                 dbc.Button("Закрыть", id="close-modal", className="ms-auto", style={"borderRadius": "12px", "backgroundColor": "var(--text-muted)", "border": "none"})
             )
@@ -596,6 +707,88 @@ app.layout = html.Div([
         is_open=False, 
         size="lg", 
         centered=True
+    ),
+
+    # --- НОВОЕ МОДАЛЬНОЕ ОКНО: SQL РЕДАКТОР ---
+    dbc.Modal(
+        [
+            dbc.ModalHeader(
+                dbc.ModalTitle(
+                    [html.I(className="fas fa-code", style={"marginRight": "10px"}), "Продвинутый SQL-Редактор"], 
+                    style={"fontWeight": "800", "color": "var(--primary)"}
+                )
+            ),
+            dbc.ModalBody(
+                dbc.Row([
+                    # Левая колонка: Редактор Кода
+                    dbc.Col(
+                        html.Div([
+                            dcc.Textarea(
+                                id="sql-modal-input",
+                                className="sql-editor",
+                                style={
+                                    "height": "480px",
+                                    "resize": "none", 
+                                    "fontSize": "16px", 
+                                    "lineHeight": "1.6",
+                                    "padding": "20px"
+                                }
+                            ),
+                            html.Div(
+                                id="sql-modal-linter", 
+                                style={"marginTop": "8px", "fontSize": "13px", "fontWeight": "600", "minHeight": "20px"}
+                            )
+                        ]),
+                        width=8
+                    ),
+                    # Правая колонка
+                    dbc.Col(
+                        html.Div([
+                            html.H5(
+                                [html.I(className="fas fa-table", style={"marginRight": "10px", "color": "#01B574"}), "Схема: medical_data"], 
+                                style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "20px"}
+                            ),
+                            html.P(
+                                "Доступные колонки:", 
+                                style={"color": "var(--text-muted)", "fontSize": "13px", "fontWeight": "600", "textTransform": "uppercase", "marginBottom": "15px"}
+                            ),
+                            html.Div([
+                                html.Span("Период", className="schema-badge", style={"width": "100%", "textAlign": "left"}), 
+                                html.Span("Наименование отделения", className="schema-badge", style={"width": "100%", "textAlign": "left"}), 
+                                html.Span("Код Услуги", className="schema-badge", style={"width": "100%", "textAlign": "left"}), 
+                                html.Span("Наименование профиля", className="schema-badge", style={"width": "100%", "textAlign": "left"}), 
+                                html.Span("ИД пациента в версии счета", className="schema-badge", style={"width": "100%", "textAlign": "left"}), 
+                                html.Span("Сумма", className="schema-badge", style={"width": "100%", "textAlign": "left"})
+                            ]),
+                            html.Div([
+                                html.I(className="fas fa-lightbulb", style={"marginRight": "8px", "color": "#FF7D00"}),
+                                html.Span("Не забудьте использовать [квадратные скобки] для полей с пробелами.", style={"color": "var(--text-muted)", "fontSize": "13px"})
+                            ], style={"marginTop": "25px", "backgroundColor": "var(--bg-color)", "padding": "15px", "borderRadius": "12px", "border": "1px solid var(--grid-color)"})
+                        ], style={"backgroundColor": "var(--bg-color)", "borderRadius": "16px", "padding": "25px", "height": "100%", "border": "1px solid var(--grid-color)"}),
+                        width=4
+                    )
+                ])
+            ),
+            dbc.ModalFooter(
+                [
+                    dbc.Button(
+                        "Отмена", 
+                        id="btn-close-sql-modal", 
+                        style={"backgroundColor": "transparent", "border": "none", "color": "var(--text-muted)", "fontWeight": "600", "marginRight": "15px"}
+                    ),
+                    dbc.Button(
+                        [html.I(className="fas fa-save", style={"marginRight": "8px"}), "Сохранить и Применить"], 
+                        id="btn-save-sql-modal", 
+                        style={"backgroundColor": "var(--primary)", "border": "none", "borderRadius": "12px", "fontWeight": "600", "padding": "10px 20px"}
+                    )
+                ]
+            )
+        ],
+        id="sql-editor-modal",
+        is_open=False,
+        size="xl",
+        centered=True,
+        backdrop="static"
     )
 ])
 
@@ -1232,6 +1425,110 @@ def export_excel(n_clicks, years, months, depts, mes_list):
     filtered_df = filtered_df.drop(columns=[c for c in cols_to_drop if c in filtered_df.columns])
     
     return dcc.send_data_frame(filtered_df.to_excel, "Clinical_Report_Export.xlsx", index=False)
+
+@app.callback(
+    [
+        Output("sql-editor-modal", "is_open"),
+        Output("sql-modal-input", "value"),
+        Output("sql-input", "value")
+    ],
+    [
+        Input("btn-expand-sql", "n_clicks"),
+        Input("btn-save-sql-modal", "n_clicks"),
+        Input("btn-close-sql-modal", "n_clicks")
+    ],
+    [
+        State("sql-editor-modal", "is_open"),
+        State("sql-input", "value"),
+        State("sql-modal-input", "value")
+    ],
+    prevent_initial_call=True
+)
+def toggle_sql_editor(expand_clicks, save_clicks, close_clicks, is_open, main_text, modal_text):
+    """
+    Управляет открытием модального окна и синхронизирует код 
+    между маленькой песочницей и полноэкранным редактором.
+    """
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return is_open, dash.no_update, dash.no_update
+
+    trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    if trigger_id == "btn-expand-sql":
+        return True, main_text, dash.no_update
+        
+    elif trigger_id == "btn-save-sql-modal":
+        return False, dash.no_update, modal_text
+        
+    elif trigger_id == "btn-close-sql-modal":
+        return False, dash.no_update, dash.no_update
+
+    return is_open, dash.no_update, dash.no_update
+
+app.clientside_callback(
+    r"""
+    function(sql_text) {
+        // Если поле пустое, скрываем линтер
+        if (!sql_text || sql_text.trim() === "") {
+            return ["", {"display": "none"}];
+        }
+        
+        var warnings = [];
+        var text = sql_text.trim();
+        
+        // 1. Проверка на наличие точки с запятой в самом конце
+        if (!text.endsWith(';')) {
+            warnings.push("⚠️ Забыта точка с запятой ( ; ) в конце");
+        }
+        
+        // 2. Проверка парных круглых скобок
+        var openParens = (text.match(/\(/g) || []).length;
+        var closeParens = (text.match(/\)/g) || []).length;
+        if (openParens !== closeParens) {
+            warnings.push("⚠️ Незакрытые круглые скобки ( )");
+        }
+        
+        // 3. Проверка парных квадратных скобок
+        var openBrackets = (text.match(/\[/g) || []).length;
+        var closeBrackets = (text.match(/\]/g) || []).length;
+        if (openBrackets !== closeBrackets) {
+            warnings.push("⚠️ Незакрытые квадратные скобки [ ]");
+        }
+        
+        // 4. Проверка одинарных кавычек (строковые значения)
+        var singleQuotes = (text.match(/'/g) || []).length;
+        if (singleQuotes % 2 !== 0) {
+            warnings.push("⚠️ Пропущена одинарная кавычка '");
+        }
+        
+        // Базовый стиль для текста линтера
+        var baseStyle = {
+            "marginTop": "8px", 
+            "fontSize": "13px", 
+            "fontWeight": "600", 
+            "minHeight": "20px", 
+            "transition": "color 0.3s ease"
+        };
+        
+        // Если есть ошибки — выводим их оранжевым цветом
+        if (warnings.length > 0) {
+            baseStyle["color"] = "#FF7D00";
+            return [warnings.join("   |   "), baseStyle];
+        } else {
+            // Если все идеально - зеленым
+            baseStyle["color"] = "#01B574";
+            return ["✅ Синтаксис выглядит отлично!", baseStyle];
+        }
+    }
+    """,
+    [
+        Output("sql-modal-linter", "children"),
+        Output("sql-modal-linter", "style")
+    ],
+    Input("sql-modal-input", "value"),
+    prevent_initial_call=False
+)
 
 
 def open_browser(): 
