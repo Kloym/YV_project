@@ -20,6 +20,10 @@ MONTHS_RU = {
     9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
 }
 
+QUARTERS_RU = {
+    1: "1 Квартал", 2: "2 Квартал", 3: "3 Квартал", 4: "4 Квартал"
+}
+
 # Кэш для минимизации обращений к диску
 _CACHE = {
     "data": pd.DataFrame(),
@@ -251,6 +255,8 @@ def get_optimized_data() -> pd.DataFrame:
         df['Year'] = df['dt'].dt.year.astype(int)
         df['Month_Num'] = df['dt'].dt.month.astype(int)
         df['Month_Name'] = df['Month_Num'].map(MONTHS_RU)
+        df['Quarter_Num'] = df['dt'].dt.quarter.astype(int)
+        df['Quarter_Name'] = df['Quarter_Num'].map(QUARTERS_RU)
 
     # Обработка сумм
     if 'Сумма' in df.columns and df['Сумма'].dtype == object:
@@ -447,6 +453,11 @@ app.layout = html.Div([
                 html.Label("Период (Год)", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}),
                 dcc.Dropdown(id="f-year", multi=True, placeholder="Все года..."),
             ], className="mb-4"),
+
+            html.Div([
+                html.Label("Квартал", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}),
+                dcc.Dropdown(id="f-quarter", multi=True, placeholder="Все кварталы..."),
+            ], className="mb-4"),
             
             html.Div([
                 html.Label("Месяц", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}),
@@ -587,7 +598,7 @@ app.layout = html.Div([
                 dbc.Col(
                     html.Div([
                         html.H4(
-                            [html.I(className="fas fa-terminal", style={"marginRight": "12px", "color": "var(--primary)"}), "SQL-Песочница (DuckDB)"], 
+                            [html.I(className="fas fa-terminal", style={"marginRight": "12px", "color": "var(--primary)"}), "SQL-Песочница"], 
                             style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px"}
                         ),
                         html.P(
@@ -858,28 +869,32 @@ app.clientside_callback(
 @app.callback(
     [
         Output("f-year", "options"), 
+        Output("f-quarter", "options"),
         Output("f-month", "options"), 
         Output("f-dept", "options"), 
         Output("f-mes", "options")
     ], 
     [
         Input("f-year", "value"), 
+        Input("f-quarter", "value"),
         Input("f-month", "value"), 
         Input("f-dept", "value"), 
         Input("f-mes", "value")
     ]
 )
-def update_smart_filters(years, months, depts, mes_list):
-    """Обновляет выпадающие списки фильтров."""
+def update_smart_filters(years, quarters, months, depts, mes_list):
+    """Обновляет выпадающие списки фильтров, включая каскадную логику для Кварталов."""
     df = get_optimized_data()
     
     if df.empty: 
-        return [[], [], [], []]
+        return [[], [], [], [], []]
     
     def get_mask_for(skip_col: str):
         mask = pd.Series(True, index=df.index)
         if skip_col != 'Year' and years: 
             mask &= df['Year'].isin(years)
+        if skip_col != 'Quarter' and quarters:
+            mask &= df['Quarter_Name'].isin(quarters)
         if skip_col != 'Month' and months: 
             mask &= df['Month_Name'].isin(months)
         if skip_col != 'Dept' and depts: 
@@ -891,6 +906,12 @@ def update_smart_filters(years, months, depts, mes_list):
     opts_year = []
     if 'Year' in df.columns:
         opts_year = sorted(df.loc[get_mask_for('Year'), 'Year'].unique())
+
+    opts_quarter = []
+    if 'Quarter_Num' in df.columns:
+        unique_quarters = df.loc[get_mask_for('Quarter')].drop_duplicates(['Quarter_Num', 'Quarter_Name']).sort_values('Quarter_Num')
+        for _, row in unique_quarters.iterrows():
+            opts_quarter.append({"label": row['Quarter_Name'], "value": row['Quarter_Name']})
         
     opts_month = []
     if 'Month_Num' in df.columns:
@@ -906,7 +927,7 @@ def update_smart_filters(years, months, depts, mes_list):
     if 'Код Услуги' in df.columns:
         opts_mes = sorted(df.loc[get_mask_for('MES'), 'Код Услуги'].dropna().unique())
     
-    return [opts_year, opts_month, opts_dept, opts_mes]
+    return [opts_year, opts_quarter, opts_month, opts_dept, opts_mes]
 
 
 @app.callback(
@@ -921,6 +942,7 @@ def update_smart_filters(years, months, depts, mes_list):
     ],
     [
         Input("f-year", "value"), 
+        Input("f-quarter", "value"),
         Input("f-month", "value"), 
         Input("f-dept", "value"), 
         Input("f-mes", "value"), 
@@ -929,8 +951,7 @@ def update_smart_filters(years, months, depts, mes_list):
         Input("theme-store", "data")
     ]
 )
-def update_standard_dashboard(years, months, depts, mes_list, metric, group_by_col, theme):
-    """Главная функция отрисовки стандартного дашборда."""
+def update_standard_dashboard(years, quarters, months, depts, mes_list, metric, group_by_col, theme):
     df = get_optimized_data()
     insight_html = html.Div("Загрузка данных...", style={"color": "var(--text-muted)"})
     
@@ -940,6 +961,8 @@ def update_standard_dashboard(years, months, depts, mes_list, metric, group_by_c
     mask = pd.Series(True, index=df.index)
     if years: 
         mask &= df['Year'].isin(years)
+    if quarters:
+        mask &= df['Quarter_Name'].isin(quarters)
     if months: 
         mask &= df['Month_Name'].isin(months)
     if depts: 
@@ -1396,14 +1419,15 @@ def execute_custom_sql(n_clicks, query, theme):
     Output("download-xlsx", "data"), 
     Input("btn-dl", "n_clicks"), 
     [
-        State("f-year", "value"), 
+        State("f-year", "value"),
+        State("f-quarter", "value"),
         State("f-month", "value"), 
         State("f-dept", "value"), 
         State("f-mes", "value")
     ], 
     prevent_initial_call=True
 )
-def export_excel(n_clicks, years, months, depts, mes_list):
+def export_excel(n_clicks, years, quarters, months, depts, mes_list):
     """
     Экспортирует отфильтрованные данные обратно в Excel-файл.
     """
@@ -1412,6 +1436,8 @@ def export_excel(n_clicks, years, months, depts, mes_list):
     
     if years and 'Year' in df.columns: 
         mask &= df['Year'].isin(years)
+    if quarters and 'Quarter_Name' in df.columns:
+        mask &= df['Quarter_Name'].isin(quarters)
     if months and 'Month_Name' in df.columns: 
         mask &= df['Month_Name'].isin(months)
     if depts and 'Наименование отделения' in df.columns: 
@@ -1421,7 +1447,7 @@ def export_excel(n_clicks, years, months, depts, mes_list):
 
     filtered_df = df[mask].copy()
 
-    cols_to_drop = ['dt', 'Year', 'Month_Num', 'Month_Name']
+    cols_to_drop = ['dt', 'Year', 'Month_Num', 'Month_Name', 'Quarter_Num', 'Quarter_Name']
     filtered_df = filtered_df.drop(columns=[c for c in cols_to_drop if c in filtered_df.columns])
     
     return dcc.send_data_frame(filtered_df.to_excel, "Clinical_Report_Export.xlsx", index=False)
