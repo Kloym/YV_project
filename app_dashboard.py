@@ -287,7 +287,7 @@ def get_optimized_data() -> pd.DataFrame:
 def apply_beautiful_layout(fig: go.Figure, theme: str, x_range=None, tickvals=None, ticktext=None) -> go.Figure:
     """
     Единая функция для применения красивого дизайна ко всем графикам.
-    Впитывает в себя настройки отступов, легенды, сетки и темной/светлой темы.
+    Все настройки отступов, легенды, сетки и темной/светлой темы.
     """
     if theme == "dark": 
         text_color, grid_color, card_bg = "#ffffff", "#1b254b", "#111c44"
@@ -349,7 +349,7 @@ def apply_beautiful_layout(fig: go.Figure, theme: str, x_range=None, tickvals=No
 
 def create_kpi_card(title: str, id_value: str, icon_class: str, color_hex: str, bg_rgba: str) -> dbc.Card:
     """
-    Генерирует стандартизированную карточку KPI (Key Performance Indicator).
+    Генерирует стандартизированную карточку KPI.
     """
     return dbc.Card(
         [
@@ -544,7 +544,22 @@ app.layout = html.Div([
         dbc.Row([
             dbc.Col(
                 html.Div([
-                    html.H4("Аналитика по времени", id="main-chart-title", style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "30px", "letterSpacing": "-0.5px"}),
+                    html.H4("Аналитика по времени", id="main-chart-title", style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px", "letterSpacing": "-0.5px"}),
+                    
+                    # --- НОВЫЙ БЛОК ---
+                    html.Div(id="smart-insights-container", style={
+                        "marginBottom": "20px",
+                        "padding": "16px 20px",
+                        "backgroundColor": "var(--primary-light)",
+                        "borderRadius": "14px",
+                        "border": "1px solid var(--grid-color)",
+                        "fontSize": "15px",
+                        "display": "flex",
+                        "flexDirection": "column",
+                        "alignItems": "flex-start",
+                        "transition": "all 0.3s"
+                    }),
+
                     dcc.Graph(id="main-line-chart", config={'displayModeBar': False}, style={"height": "480px"})
                 ], style={
                     "backgroundColor": "var(--card-bg)", 
@@ -557,7 +572,7 @@ app.layout = html.Div([
             )
         ]),
 
-        # --- НОВЫЙ БЛОК: SQL ---
+        # БЛОК: SQL
         dbc.Row([
             dbc.Col(
                 html.Div([
@@ -660,9 +675,6 @@ def update_smart_filters(years, months, depts, mes_list):
         return [[], [], [], []]
     
     def get_mask_for(skip_col: str) -> pd.Series:
-        """
-        Создает маску фильтрации, игнорируя колонку
-        """
         mask = pd.Series(True, index=df.index)
         if skip_col != 'Year' and years and 'Year' in df.columns: 
             mask &= df['Year'].isin(years)
@@ -691,7 +703,8 @@ def update_smart_filters(years, months, depts, mes_list):
 @app.callback(
     [Output("main-line-chart", "figure"), Output("main-chart-title", "children"),
      Output("kpi-sum", "children"), Output("kpi-patients", "children"), 
-     Output("kpi-mes", "children"), Output("kpi-depts", "children")],
+     Output("kpi-mes", "children"), Output("kpi-depts", "children"),
+     Output("smart-insights-container", "children")],
     [Input("f-year", "value"), Input("f-month", "value"),
      Input("f-dept", "value"), Input("f-mes", "value"), 
      Input("f-metric", "value"), Input("f-group-by", "value"), Input("theme-store", "data")]
@@ -702,8 +715,10 @@ def update_standard_dashboard(years, months, depts, mes_list, metric, group_by_c
     Рассчитывает показатели и строит график на основе выбранных метрик и группировок.
     """
     df = get_optimized_data()
+    insight_html = html.Div("Загрузка данных...", style={"color": "var(--text-muted)"})
+
     if df.empty: 
-        return go.Figure(), "Аналитика по времени", "0,00 ₽", "0", "0", "0"
+        return go.Figure(), "Аналитика по времени", "0,00 ₽", "0", "0", "0", insight_html
 
     mask = pd.Series(True, index=df.index)
     if years and 'Year' in df.columns: 
@@ -715,7 +730,7 @@ def update_standard_dashboard(years, months, depts, mes_list, metric, group_by_c
     if mes_list and 'Код Услуги' in df.columns: 
         mask &= df['Код Услуги'].isin(mes_list)
 
-    filtered_df = df[mask]
+    filtered_df = df[mask].copy()
 
     if 'Сумма' in filtered_df.columns:
         total_sum = f"{filtered_df['Сумма'].sum():,.2f}".replace(",", " ").replace(".", ",") + " ₽"
@@ -734,6 +749,116 @@ def update_standard_dashboard(years, months, depts, mes_list, metric, group_by_c
         unique_dates = sorted(filtered_df['dt'].unique())
         tickvals = unique_dates
         ticktext = [f"{MONTHS_RU[pd.Timestamp(d).month]} {pd.Timestamp(d).year}" for d in unique_dates]
+
+    # --- РАСЧЕТ ДЛЯ БЛОКА С ЗАЩИТАМИ И ДЕТАЛИЗАЦИЕЙ ---
+    try:
+        if not filtered_df.empty and 'dt' in filtered_df.columns:
+            filtered_df['YearMonth'] = filtered_df['dt'].dt.to_period('M')
+            
+            if metric == "sum" and 'Сумма' in filtered_df.columns:
+                trend_df = filtered_df.groupby('YearMonth', observed=True)['Сумма'].sum().reset_index()
+                metric_name = "Сумма"
+                def fmt(x): return f"{x:,.2f} ₽".replace(',', ' ').replace('.', ',')
+            elif metric == "count_patients" and 'ИД пациента в версии счета' in filtered_df.columns:
+                trend_df = filtered_df.groupby('YearMonth', observed=True)['ИД пациента в версии счета'].nunique().reset_index(name='val')
+                metric_name = "Уникальные пациенты"
+                def fmt(x): return f"{x:,.0f} чел.".replace(',', ' ')
+            else:
+                trend_df = filtered_df.groupby('YearMonth', observed=True).size().reset_index(name='val')
+                metric_name = "Количество услуг (МЭС)"
+                def fmt(x): return f"{x:,.0f} ед.".replace(',', ' ')
+
+            trend_df = trend_df.sort_values('YearMonth')
+            
+            if trend_df.empty:
+                insight_html = html.Div([
+                    html.I(className="fas fa-exclamation-circle", style={"color": "#FF7D00", "marginRight": "12px", "fontSize": "20px"}),
+                    html.Span("После применения фильтров данные для сводки отсутствуют.", style={"color": "var(--text-muted)"})
+                ])
+            else:
+                # 1. Капсулы с детализацией по каждому месяцу
+                breakdown_badges = []
+                for _, row in trend_df.iterrows():
+                    m_num = row['YearMonth'].month
+                    m_name = MONTHS_RU.get(m_num, str(m_num))
+                    y_val = row['YearMonth'].year
+                    val = row['Сумма'] if metric == 'sum' else row['val']
+                    
+                    badge = html.Span(f"{m_name} {y_val}: {fmt(val)}", style={
+                        "backgroundColor": "var(--card-bg)",
+                        "border": "1px solid var(--grid-color)",
+                        "borderRadius": "8px",
+                        "padding": "4px 10px",
+                        "margin": "4px",
+                        "fontSize": "13px",
+                        "fontWeight": "600",
+                        "color": "var(--text-main)",
+                        "display": "inline-block",
+                        "boxShadow": "0px 2px 4px rgba(0,0,0,0.02)"
+                    })
+                    breakdown_badges.append(badge)
+
+                # 2. Основной текст о разнице
+                if len(trend_df) >= 2:
+                    first_row = trend_df.iloc[0]
+                    last_row = trend_df.iloc[-1]
+                    
+                    first_val = first_row['Сумма'] if metric == 'sum' else first_row['val']
+                    last_val = last_row['Сумма'] if metric == 'sum' else last_row['val']
+                    
+                    diff = last_val - first_val
+                    perc = (diff / first_val * 100) if first_val != 0 else 0
+                    
+                    first_m_text = f"{MONTHS_RU.get(first_row['YearMonth'].month, '')} {first_row['YearMonth'].year}"
+                    last_m_text = f"{MONTHS_RU.get(last_row['YearMonth'].month, '')} {last_row['YearMonth'].year}"
+                    
+                    if diff > 0:
+                        verb, color, icon, sign = "увеличился", "#01B574", "fas fa-arrow-trend-up", "+"
+                    elif diff < 0:
+                        verb, color, icon, sign = "снизился", "#E11D48", "fas fa-arrow-trend-down", ""
+                    else:
+                        verb, color, icon, sign = "не изменился", "var(--text-muted)", "fas fa-minus", ""
+
+                    diff_block = html.Div([
+                        html.Span(f"Показатель «{metric_name}» {verb} с {fmt(first_val)} ({first_m_text}) до {fmt(last_val)} ({last_m_text}). Разница составила: ", style={"color": "var(--text-main)"}),
+                        html.Span([
+                            html.I(className=icon, style={"marginRight": "6px"}),
+                            f"{sign}{fmt(diff)} ({sign}{perc:.1f}%)"
+                        ], style={
+                            "color": color, 
+                            "fontWeight": "700", 
+                            "backgroundColor": f"{color}1A", 
+                            "padding": "4px 10px", 
+                            "borderRadius": "8px", 
+                            "marginLeft": "6px",
+                            "display": "inline-block"
+                        })
+                    ], style={"marginBottom": "12px"})
+                else:
+                    diff_block = html.Div([
+                        html.Span("Данные представлены за один месяц. Выберите больше периодов для сравнения динамики.", style={"color": "var(--text-muted)", "fontStyle": "italic"})
+                    ], style={"marginBottom": "12px"})
+
+                insight_html = html.Div([
+                    html.Div([
+                        html.I(className="fas fa-robot", style={"color": "var(--primary)", "marginRight": "12px", "fontSize": "20px"}),
+                        html.Span("Сводка:", style={"fontWeight": "800", "color": "var(--primary)", "marginRight": "8px", "fontSize": "16px"}),
+                    ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px"}),
+                    diff_block,
+                    html.Div(breakdown_badges, style={"display": "flex", "flexWrap": "wrap", "marginTop": "5px"})
+                ], style={"display": "flex", "flexDirection": "column", "width": "100%"})
+
+        else:
+             insight_html = html.Div([
+                    html.I(className="fas fa-exclamation-triangle", style={"color": "#FF7D00", "marginRight": "12px", "fontSize": "20px"}),
+                    html.Span("Данные отсутствуют. Измените параметры фильтров.", style={"color": "var(--text-muted)"})
+                ])
+    except Exception as e:
+        insight_html = html.Div([
+            html.I(className="fas fa-bomb", style={"color": "#E11D48", "marginRight": "12px", "fontSize": "20px"}),
+            html.Span(f"Ошибка при формировании AI-Сводки: {str(e)}", style={"color": "#E11D48", "fontWeight": "600"})
+        ])
+
 
     if not filtered_df.empty and 'dt' in filtered_df.columns and group_by_col in filtered_df.columns:
         
@@ -789,13 +914,14 @@ def update_standard_dashboard(years, months, depts, mes_list, metric, group_by_c
 
     fig = apply_beautiful_layout(fig, theme, x_range, tickvals, ticktext)
 
-    return fig, "Аналитика по времени (Стандартный режим)", total_sum, total_patients, total_mes, active_depts
+    return fig, "Аналитика по времени (Стандартный режим)", total_sum, total_patients, total_mes, active_depts, insight_html
 
 
 @app.callback(
     [Output("main-line-chart", "figure", allow_duplicate=True), 
      Output("main-chart-title", "children", allow_duplicate=True),
-     Output("sql-error", "children")],
+     Output("sql-error", "children"),
+     Output("smart-insights-container", "children", allow_duplicate=True)],
     Input("btn-execute-sql", "n_clicks"),
     [State("sql-input", "value"), State("theme-store", "data")],
     prevent_initial_call=True
@@ -805,8 +931,14 @@ def execute_custom_sql(n_clicks, query, theme):
     Выполняет кастомный SQL-запрос и переписывает главный график.
     Работает через in-memory базу, чтобы использовать очищенные колонки.
     """
+    sql_insight = html.Div([
+        html.I(className="fas fa-terminal", style={"color": "var(--text-muted)", "marginRight": "12px", "fontSize": "20px"}),
+        html.Span("Пользовательский запрос: ", style={"fontWeight": "800", "color": "var(--text-main)"}),
+        html.Span(" Умная Сводка динамики отключена в режиме SQL-Песочницы.", style={"color": "var(--text-muted)", "marginLeft": "5px"})
+    ])
+
     if not query or not query.strip():
-        return dash.no_update, dash.no_update, ""
+        return dash.no_update, dash.no_update, "", dash.no_update
 
     try:
         df = get_optimized_data()
@@ -817,7 +949,7 @@ def execute_custom_sql(n_clicks, query, theme):
         conn.close()
 
         if df_sql.empty:
-            return dash.no_update, dash.no_update, "✅ Запрос выполнен успешно, но вернул пустой результат (0 строк)."
+            return dash.no_update, dash.no_update, "✅ Запрос выполнен успешно, но вернул пустой результат (0 строк).", dash.no_update
 
         fig = go.Figure()
         x_col = df_sql.columns[0] 
@@ -872,7 +1004,7 @@ def execute_custom_sql(n_clicks, query, theme):
                 color_idx += 1
 
         if not has_numeric:
-             return dash.no_update, dash.no_update, "⚠️ Для построения графика нужна хотя бы одна числовая колонка в результате."
+             return dash.no_update, dash.no_update, "⚠️ Для построения графика нужна хотя бы одна числовая колонка в результате.", dash.no_update
 
         def format_label(label, max_len=35):
             s = str(label)
@@ -896,10 +1028,10 @@ def execute_custom_sql(n_clicks, query, theme):
         fig.update_yaxes(range=[-y_padding, max_y_value + y_padding])
         fig.update_layout(xaxis_tickangle=-30)
 
-        return fig, "Аналитика по времени (SQL Режим 👨‍💻)", ""
+        return fig, "Аналитика по времени (SQL Режим 👨‍💻)", "", sql_insight
 
     except Exception as e:
-        return dash.no_update, dash.no_update, f"❌ Ошибка в запросе: {str(e)}"
+        return dash.no_update, dash.no_update, f"❌ Ошибка в запросе: {str(e)}", dash.no_update
 
 @app.callback(
     Output("download-xlsx", "data"),
