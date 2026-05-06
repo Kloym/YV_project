@@ -27,8 +27,7 @@ def clean_dataframe(df: pd.DataFrame, file_name: str) -> pd.DataFrame:
     """
     Легкая очистка данных перед вставкой в БД.
     """
-    df = df.dropna(how='all', axis=0)
-    df = df.dropna(how='all', axis=1)
+    df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
 
     if df.empty:
         return df
@@ -65,13 +64,12 @@ def process_excel_files(file_paths: Tuple[str, ...]) -> Tuple[int, int]:
             
             try:
                 df = pd.read_excel(file_path, skiprows=ROWS_TO_SKIP)
-                
                 df_cleaned = clean_dataframe(df, file_name)
                 
                 if df_cleaned.empty:
                     logger.warning(f"Файл {file_name} пуст. Пропуск.")
                     continue
-                    
+
                 df_cleaned.to_sql(TABLE_NAME, conn, if_exists='append', index=False, chunksize=10000)
                 
                 rows_added = len(df_cleaned)
@@ -99,7 +97,6 @@ def main():
 
     try:
         logger.info(f"Запущена пакетная обработка. Выбрано файлов: {len(file_paths)}")
-        
         success_count, total_rows = process_excel_files(file_paths)
         
         if success_count > 0:

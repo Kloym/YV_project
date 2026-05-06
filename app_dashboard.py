@@ -7,9 +7,10 @@ import pandas as pd
 import plotly.graph_objects as go
 import dash_bootstrap_components as dbc
 from dash import html, dcc, Input, Output, State
+import duckdb
 
 
-# КОНФИГУРАЦИЯ И КОНСТАНТЫ
+# --- КОНФИГУРАЦИЯ И КОНСТАНТЫ ---
 
 DB_NAME = "database.db"
 
@@ -25,7 +26,8 @@ _CACHE = {
     "last_modified": 0
 }
 
-# ИНИЦИАЛИЗАЦИЯ ПРИЛОЖЕНИЯ
+
+# --- ИНИЦИАЛИЗАЦИЯ ПРИЛОЖЕНИЯ ---
 
 app = dash.Dash(
     __name__, 
@@ -33,11 +35,15 @@ app = dash.Dash(
         dbc.themes.BOOTSTRAP, 
         "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css",
         "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+    ],
+    external_scripts=[
+        "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"
     ]
 )
 app.title = "Clinical Dashboard"
 
-# CSS Блок
+
+# --- CSS СТИЛИ ---
 
 app.index_string = '''
 <!DOCTYPE html>
@@ -48,29 +54,27 @@ app.index_string = '''
         {%favicon%}
         {%css%}
         <style>
-            /* --- БАЗОВЫЕ ПЕРЕМЕННЫЕ (СВЕТЛАЯ ТЕМА) --- */
             :root {
                 --bg-color: #f4f7fe;
                 --card-bg: #ffffff;
                 --text-main: #1b2559;
                 --text-muted: #a3aed1;
                 --grid-color: #e9edf7;
-                --shadow: 0px 18px 40px rgba(112, 144, 176, 0.12);
-                --sidebar-shadow: 14px 17px 40px 4px rgba(112, 144, 176, 0.08);
                 --primary: #4318FF;
                 --primary-light: rgba(67, 24, 255, 0.1);
+                --shadow: 0px 18px 40px rgba(112, 144, 176, 0.12);
+                --sidebar-shadow: 14px 17px 40px 4px rgba(112, 144, 176, 0.08);
             }
 
-            /* --- ПЕРЕМЕННЫЕ (ТЕМНАЯ ТЕМА) --- */
             [data-theme="dark"] {
                 --bg-color: #0b1437;
                 --card-bg: #111c44;
                 --text-main: #ffffff;
                 --text-muted: #8f9bba;
                 --grid-color: #1b254b;
+                --primary-light: rgba(67, 24, 255, 0.2);
                 --shadow: 0px 18px 40px rgba(0, 0, 0, 0.4);
                 --sidebar-shadow: 14px 17px 40px 4px rgba(0, 0, 0, 0.5);
-                --primary-light: rgba(67, 24, 255, 0.2);
             }
 
             body {
@@ -81,152 +85,70 @@ app.index_string = '''
                 margin: 0;
             }
             
-            /* --- ДИЗАЙН ВЫПАДАЮЩИХ СПИСКОВ --- */
+            /* Дизайн выпадающих списков */
+            .Select, .Select-value { background-color: transparent !important; }
+            .Select-control { background-color: var(--card-bg) !important; border: 2px solid var(--grid-color) !important; border-radius: 16px !important; box-shadow: none !important; padding: 4px 8px !important; transition: all 0.3s ease !important; }
+            .Select-control:hover, .is-focused > .Select-control { border-color: var(--primary) !important; box-shadow: 0 0 0 4px var(--primary-light) !important; }
+            .Select-value-label, .Select-input > input, .Select-placeholder { color: var(--text-main) !important; font-weight: 500; }
+            .Select-menu-outer { background-color: var(--card-bg) !important; border: 1px solid var(--grid-color) !important; border-radius: 16px !important; box-shadow: var(--shadow) !important; margin-top: 8px !important; padding: 8px !important; z-index: 9999 !important; }
+            .Select-menu-outer input { background-color: var(--bg-color) !important; border: 1px solid var(--grid-color) !important; color: var(--text-main) !important; border-radius: 10px !important; padding: 10px 15px !important; }
+            .Select-menu-outer label { color: var(--text-main) !important; font-weight: 500 !important; }
+            .VirtualizedSelectOption { color: var(--text-main) !important; padding: 10px 15px !important; border-radius: 10px !important; margin-bottom: 2px !important; transition: all 0.2s; background-color: transparent !important; }
+            .VirtualizedSelectFocusedOption, .VirtualizedSelectOption:hover { background-color: var(--primary-light) !important; color: var(--primary) !important; }
+            .has-value.Select--multi .Select-value { background-color: var(--primary-light) !important; color: var(--primary) !important; border: 1px solid var(--grid-color) !important; border-radius: 12px !important; padding: 4px 10px !important; margin: 4px !important; font-weight: 600; }
+            .has-value.Select--multi .Select-value-icon { border-right: 1px solid var(--grid-color) !important; color: var(--primary) !important; border-radius: 12px 0 0 12px !important; transition: background 0.2s; }
+            .has-value.Select--multi .Select-value-icon:hover { background-color: var(--primary) !important; color: white !important; }
             
-            /* Делаем прозрачным фон базовых контейнеров, чтобы они не перекрывали цвета */
-            .Select, .Select-value {
-                background-color: transparent !important;
-            }
-
-            .Select-control { 
-                background-color: var(--card-bg) !important; 
-                border: 2px solid var(--grid-color) !important; 
-                border-radius: 16px !important; 
-                box-shadow: none !important; 
-                padding: 4px 8px !important; 
-                transition: all 0.3s ease !important; 
-            }
-            
-            .Select-control:hover, .is-focused > .Select-control { 
-                border-color: var(--primary) !important; 
-                box-shadow: 0 0 0 4px var(--primary-light) !important; 
-            }
-
-            /* Текст выбранного значения и заглушки опирается на переменные */
-            .Select-value-label,
-            .Select-input > input,
-            .Select-placeholder { 
-                color: var(--text-main) !important; 
-                font-weight: 500;
-            }
-
-            /* Выпадающее меню с опциями */
-            .Select-menu-outer { 
-                background-color: var(--card-bg) !important; 
-                border: 1px solid var(--grid-color) !important; 
-                border-radius: 16px !important; 
-                box-shadow: var(--shadow) !important; 
-                margin-top: 8px !important; 
-                padding: 8px !important; 
-                z-index: 9999 !important; 
-            }
-            
-            .Select-menu-outer input { 
-                background-color: var(--bg-color) !important; 
-                border: 1px solid var(--grid-color) !important; 
-                color: var(--text-main) !important; 
-                border-radius: 10px !important; 
-                padding: 10px 15px !important; 
-            }
-            
-            .Select-menu-outer label { 
-                color: var(--text-main) !important; 
-                font-weight: 500 !important; 
-            }
-            
-            .Select-menu-outer button { 
-                color: var(--primary) !important; 
-                font-weight: 600 !important; 
-                background: transparent !important; 
-                border: none !important; 
-            }
-            
-            .VirtualizedSelectOption { 
-                color: var(--text-main) !important; 
-                padding: 10px 15px !important; 
-                border-radius: 10px !important; 
-                margin-bottom: 2px !important; 
-                transition: all 0.2s; 
-                background-color: transparent !important;
-            }
-            
-            .VirtualizedSelectFocusedOption, .VirtualizedSelectOption:hover { 
-                background-color: var(--primary-light) !important; 
-                color: var(--primary) !important; 
-            }
-
-            /* Капсулы (Tags) для множественного выбора */
-            .has-value.Select--multi .Select-value { 
-                background-color: var(--primary-light) !important; 
-                color: var(--primary) !important; 
-                border: 1px solid var(--grid-color) !important; 
-                border-radius: 12px !important; 
-                padding: 4px 10px !important; 
-                margin: 4px !important; 
-                font-weight: 600; 
-            }
-            
-            .has-value.Select--multi .Select-value-icon { 
-                border-right: 1px solid var(--grid-color) !important; 
-                color: var(--primary) !important; 
-                border-radius: 12px 0 0 12px !important; 
-                transition: background 0.2s; 
-            }
-            
-            .has-value.Select--multi .Select-value-icon:hover { 
-                background-color: var(--primary) !important; 
-                color: white !important; 
-            }
-            
-            /* Скроллбар */
+            /* Скроллбар и SQL песочница */
             ::-webkit-scrollbar { width: 8px; height: 8px; }
             ::-webkit-scrollbar-track { background: transparent; }
             ::-webkit-scrollbar-thumb { background: var(--grid-color); border-radius: 10px; }
             ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
-            
-            /* Иконка стрелочки и крестик */
             .Select-clear-zone { color: var(--text-muted) !important; }
             .Select-arrow { border-color: var(--text-muted) transparent transparent !important; }
             
-            /* --- ДИЗАЙН SQL ПЕСОЧНИЦЫ --- */
-            .sql-editor {
-                font-family: 'Courier New', Courier, monospace !important;
-                background-color: #1e1e1e !important;
-                color: #d4d4d4 !important;
-                border-radius: 16px !important;
-                border: 2px solid var(--grid-color) !important;
-                padding: 15px !important;
-                width: 100% !important;
-                min-height: 140px !important;
-                resize: vertical !important;
-                transition: all 0.3s ease;
-                font-size: 14px;
+            .sql-editor { 
+                font-family: 'Courier New', Courier, monospace !important; 
+                background-color: #1e1e1e !important; 
+                color: #d4d4d4 !important; 
+                border-radius: 16px !important; 
+                border: 2px solid var(--grid-color) !important; 
+                padding: 15px !important; 
+                width: 100% !important; 
+                min-height: 140px !important; 
+                resize: vertical !important; 
+                transition: all 0.3s ease; 
+                font-size: 14px; 
+            }
+            .sql-editor:focus { 
+                border-color: var(--primary) !important; 
+                outline: none !important; 
+                box-shadow: 0 0 0 4px var(--primary-light) !important; 
+            }
+            .schema-badge { 
+                background-color: var(--bg-color); 
+                color: var(--text-main); 
+                padding: 8px 14px; 
+                border-radius: 10px; 
+                font-size: 13px; 
+                font-weight: 600; 
+                display: inline-block; 
+                margin: 4px; 
+                border: 1px solid var(--grid-color); 
+                transition: all 0.3s; 
+            }
+            .schema-badge:hover { 
+                background-color: var(--primary-light); 
+                color: var(--primary); 
+                border-color: var(--primary); 
+                cursor: default; 
             }
             
-            .sql-editor:focus {
-                border-color: var(--primary) !important;
-                outline: none !important;
-                box-shadow: 0 0 0 4px var(--primary-light) !important;
-            }
-            
-            .schema-badge {
-                background-color: var(--bg-color);
-                color: var(--text-main);
-                padding: 8px 14px;
-                border-radius: 10px;
-                font-size: 13px;
-                font-weight: 600;
-                display: inline-block;
-                margin: 4px;
-                border: 1px solid var(--grid-color);
-                transition: all 0.3s;
-            }
-            
-            .schema-badge:hover {
-                background-color: var(--primary-light);
-                color: var(--primary);
-                border-color: var(--primary);
-                cursor: default;
+            /* Стили для PDF экспорта: скрываем элементы интерфейса при сохранении PDF */
+            @media print {
+                .no-print { display: none !important; }
+                body { background-color: white !important; }
+                .card { box-shadow: none !important; border: 1px solid #ddd !important; }
             }
         </style>
     </head>
@@ -236,6 +158,9 @@ app.index_string = '''
     </body>
 </html>
 '''
+
+
+# --- ФУНКЦИИ ОБРАБОТКИ ДАННЫХ И ВИЗУАЛА ---
 
 def get_optimized_data() -> pd.DataFrame:
     """
@@ -257,6 +182,7 @@ def get_optimized_data() -> pd.DataFrame:
     if df.empty:
         return df
 
+    # Очистка названий колонок
     df.columns = (
         df.columns
         .str.replace(r'\n|\r', ' ', regex=True)
@@ -264,6 +190,7 @@ def get_optimized_data() -> pd.DataFrame:
         .str.strip()
     )
 
+    # Обработка дат
     if 'Период' in df.columns:
         df['dt'] = pd.to_datetime(df['Период'], errors='coerce')
         df = df.dropna(subset=['dt'])
@@ -271,6 +198,7 @@ def get_optimized_data() -> pd.DataFrame:
         df['Month_Num'] = df['dt'].dt.month.astype(int)
         df['Month_Name'] = df['Month_Num'].map(MONTHS_RU)
 
+    # Обработка сумм
     if 'Сумма' in df.columns and df['Сумма'].dtype == object:
         df['Сумма'] = pd.to_numeric(
             df['Сумма'].astype(str).str.replace(',', '.').str.replace(' ', ''), 
@@ -283,16 +211,19 @@ def get_optimized_data() -> pd.DataFrame:
     return df
 
 
-# --- ЕДИНАЯ ФУНКЦИЯ ГРАФИКА ---
 def apply_beautiful_layout(fig: go.Figure, theme: str, x_range=None, tickvals=None, ticktext=None) -> go.Figure:
     """
     Единая функция для применения красивого дизайна ко всем графикам.
-    Все настройки отступов, легенды, сетки и темной/светлой темы.
+    Установлен hovermode='closest' для корректного клика по точкам.
     """
     if theme == "dark": 
-        text_color, grid_color, card_bg = "#ffffff", "#1b254b", "#111c44"
+        text_color = "#ffffff"
+        grid_color = "#1b254b"
+        card_bg = "#111c44"
     else: 
-        text_color, grid_color, card_bg = "#1b2559", "#e9edf7", "#ffffff"
+        text_color = "#1b2559"
+        grid_color = "#e9edf7"
+        card_bg = "#ffffff"
 
     xaxis_config = dict(
         showgrid=False, 
@@ -305,6 +236,7 @@ def apply_beautiful_layout(fig: go.Figure, theme: str, x_range=None, tickvals=No
 
     if x_range is not None:
         xaxis_config['range'] = x_range
+        
     if tickvals is not None and ticktext is not None:
         xaxis_config['tickmode'] = 'array'
         xaxis_config['tickvals'] = tickvals
@@ -339,18 +271,14 @@ def apply_beautiful_layout(fig: go.Figure, theme: str, x_range=None, tickvals=No
             font_color=text_color, 
             bordercolor=grid_color
         ),
-        hovermode="x unified",
+        hovermode="closest",
         barmode="group"
     )
     return fig
 
 
-# UI КОМПОНЕНТЫ
-
 def create_kpi_card(title: str, id_value: str, icon_class: str, color_hex: str, bg_rgba: str) -> dbc.Card:
-    """
-    Генерирует стандартизированную карточку KPI.
-    """
+    """Генерирует стандартизированную карточку KPI."""
     return dbc.Card(
         [
             dbc.CardBody([
@@ -407,243 +335,286 @@ def create_kpi_card(title: str, id_value: str, icon_class: str, color_hex: str, 
     )
 
 
+# --- ВЕРСТКА ИНТЕРФЕЙСА ---
+
 app.layout = html.Div([
     dcc.Store(id="theme-store", data="light"),
-
-    html.Div([
-        html.Div([
-            html.I(className="fas fa-heartbeat", style={"color": "var(--primary)", "fontSize": "32px", "marginRight": "12px"}),
-            html.H3("Clinical", style={"color": "var(--text-main)", "fontWeight": "800", "margin": 0, "letterSpacing": "-1px", "transition": "color 0.3s"})
-        ], style={"marginBottom": "45px", "display": "flex", "alignItems": "center", "padding": "10px"}),
-        
-        # Блок 1: Настройки Аналитики
-        html.Div([
-            html.Label("1. Показатель (Что считаем?)", style={"color": "var(--text-main)", "fontWeight": "700", "fontSize": "13px", "marginBottom": "8px", "textTransform": "uppercase"}),
-            dcc.Dropdown(
-                id="f-metric",
-                options=[
-                    {"label": "💰 Общая сумма (₽)", "value": "sum"},
-                    {"label": "📋 Количество услуг (МЭС)", "value": "count_mes"},
-                    {"label": "🧑 Уникальные пациенты", "value": "count_patients"}
-                ],
-                value="count_mes", 
-                clearable=False,
-            ),
+    html.Div(
+        className="no-print",
+        style={
+            "position": "fixed", 
+            "top": 0, 
+            "left": 0, 
+            "bottom": 0, 
+            "width": "340px", 
+            "padding": "40px 30px", 
+            "backgroundColor": "var(--card-bg)", 
+            "boxShadow": "var(--sidebar-shadow)", 
+            "zIndex": 100, 
+            "overflowY": "auto"
+        },
+        children=[
+            html.Div([
+                html.I(className="fas fa-heartbeat", style={"color": "var(--primary)", "fontSize": "32px", "marginRight": "12px"}),
+                html.H3("Clinical", style={"color": "var(--text-main)", "fontWeight": "800", "margin": 0, "letterSpacing": "-1px", "transition": "color 0.3s"})
+            ], style={"marginBottom": "45px", "display": "flex", "alignItems": "center", "padding": "10px"}),
             
-            html.Label("2. Разрез линий (Группировка)", style={"color": "var(--text-main)", "fontWeight": "700", "fontSize": "13px", "marginBottom": "8px", "marginTop": "20px", "textTransform": "uppercase"}),
-            dcc.Dropdown(
-                id="f-group-by",
-                options=[
-                    {"label": "🏥 По отделениям", "value": "Наименование отделения"},
-                    {"label": "📋 По кодам МЭС", "value": "Код Услуги"},
-                    {"label": "🩺 По профилям", "value": "Наименование профиля"}
-                ],
-                value="Наименование отделения", 
-                clearable=False,
+            # Блок 1: Настройки Аналитики
+            html.Div([
+                html.Label("1. Показатель (Что считаем?)", style={"color": "var(--text-main)", "fontWeight": "700", "fontSize": "13px", "marginBottom": "8px", "textTransform": "uppercase"}),
+                dcc.Dropdown(
+                    id="f-metric",
+                    options=[
+                        {"label": "💰 Общая сумма (₽)", "value": "sum"},
+                        {"label": "📋 Количество услуг (МЭС)", "value": "count_mes"},
+                        {"label": "🧑 Уникальные пациенты", "value": "count_patients"}
+                    ],
+                    value="count_mes", 
+                    clearable=False,
+                ),
+                
+                html.Label("2. Разрез линий (Группировка)", style={"color": "var(--text-main)", "fontWeight": "700", "fontSize": "13px", "marginBottom": "8px", "marginTop": "20px", "textTransform": "uppercase"}),
+                dcc.Dropdown(
+                    id="f-group-by",
+                    options=[
+                        {"label": "🏥 По отделениям", "value": "Наименование отделения"},
+                        {"label": "📋 По кодам МЭС", "value": "Код Услуги"},
+                        {"label": "🩺 По профилям", "value": "Наименование профиля"}
+                    ],
+                    value="Наименование отделения", 
+                    clearable=False,
+                ),
+            ], style={"marginBottom": "25px", "paddingBottom": "25px", "borderBottom": "2px dashed var(--grid-color)"}),
+
+            # Блок 2: Фильтры Данных
+            html.Label("ФИЛЬТРЫ ДАННЫХ", style={"color": "var(--text-muted)", "fontWeight": "800", "fontSize": "12px", "marginBottom": "15px", "letterSpacing": "1px"}),
+            
+            html.Div([
+                html.Label("Период (Год)", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}),
+                dcc.Dropdown(id="f-year", multi=True, placeholder="Все года..."),
+            ], className="mb-4"),
+            
+            html.Div([
+                html.Label("Месяц", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}),
+                dcc.Dropdown(id="f-month", multi=True, placeholder="Все месяцы..."),
+            ], className="mb-4"),
+            
+            html.Div([
+                html.Label("Отделение", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}),
+                dcc.Dropdown(id="f-dept", multi=True, placeholder="Все отделения..."),
+            ], className="mb-4"),
+            
+            html.Div([
+                html.Label("Код услуги (МЭС)", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}),
+                dcc.Dropdown(id="f-mes", multi=True, placeholder="Все коды услуг..."),
+            ], className="mb-4"),
+
+            dbc.Button(
+                [html.I(className="fas fa-file-excel", style={"marginRight": "10px"}), "Экспорт в Excel"], 
+                id="btn-dl", 
+                style={
+                    "width": "100%", 
+                    "backgroundColor": "var(--primary)", 
+                    "border": "none", 
+                    "borderRadius": "16px", 
+                    "padding": "14px", 
+                    "fontWeight": "600", 
+                    "boxShadow": "0px 10px 20px rgba(67, 24, 255, 0.2)", 
+                    "marginTop": "10px"
+                }
             ),
-        ], style={"marginBottom": "25px", "paddingBottom": "25px", "borderBottom": "2px dashed var(--grid-color)"}),
+            dcc.Download(id="download-xlsx")
+        ]
+    ),
 
-        # Блок 2: Фильтры Данных
-        html.Label("ФИЛЬТРЫ ДАННЫХ", style={"color": "var(--text-muted)", "fontWeight": "800", "fontSize": "12px", "marginBottom": "15px", "letterSpacing": "1px"}),
-        
-        html.Div([
-            html.Label("Период (Год)", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}),
-            dcc.Dropdown(id="f-year", multi=True, placeholder="Все года..."),
-        ], className="mb-4"),
-        
-        html.Div([
-            html.Label("Месяц", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}),
-            dcc.Dropdown(id="f-month", multi=True, placeholder="Все месяцы..."),
-        ], className="mb-4"),
-        
-        html.Div([
-            html.Label("Отделение", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}),
-            dcc.Dropdown(id="f-dept", multi=True, placeholder="Все отделения..."),
-        ], className="mb-4"),
-        
-        html.Div([
-            html.Label("Код услуги (МЭС)", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}),
-            dcc.Dropdown(id="f-mes", multi=True, placeholder="Все коды услуг..."),
-        ], className="mb-4"),
-
-        dbc.Button(
-            [html.I(className="fas fa-file-excel", style={"marginRight": "10px"}), "Экспорт в Excel"], 
-            id="btn-dl", 
-            style={
-                "width": "100%", 
-                "backgroundColor": "var(--primary)", 
-                "border": "none", 
-                "borderRadius": "16px", 
-                "padding": "14px", 
-                "fontWeight": "600", 
-                "boxShadow": "0px 10px 20px rgba(67, 24, 255, 0.2)", 
-                "marginTop": "10px"
-            }
-        ),
-        dcc.Download(id="download-xlsx")
-
-    ], style={
-        "position": "fixed", 
-        "top": 0, 
-        "left": 0, 
-        "bottom": 0, 
-        "width": "340px", 
-        "padding": "40px 30px", 
-        "backgroundColor": "var(--card-bg)", 
-        "boxShadow": "var(--sidebar-shadow)", 
-        "zIndex": 100, 
-        "transition": "all 0.4s ease", 
-        "overflowY": "auto"
-    }),
-
-    html.Div([
-
-        dbc.Row([
-            dbc.Col(html.H2("Dashboard Overview", style={"fontWeight": "800", "color": "var(--text-main)", "letterSpacing": "-1px", "transition": "color 0.3s"}), width=8),
-            dbc.Col(
-                html.Div([
-                    html.Button(
-                        html.I(id="theme-icon", className="fas fa-moon"), 
-                        id="theme-toggle", 
-                        style={
-                            "background": "transparent", 
-                            "border": "none", 
-                            "fontSize": "22px", 
-                            "color": "var(--text-muted)", 
-                            "cursor": "pointer", 
-                            "marginRight": "25px", 
-                            "transition": "color 0.4s ease"
-                        }
-                    ),
+    # ПРАВАЯ ЧАСТЬ
+    html.Div(
+        style={"marginLeft": "340px", "padding": "40px 50px", "minHeight": "100vh"},
+        children=[
+            dbc.Row([
+                dbc.Col(
+                    html.H2("Dashboard Overview", style={"fontWeight": "800", "color": "var(--text-main)", "letterSpacing": "-1px"}), 
+                    width=6
+                ),
+                dbc.Col(
                     html.Div([
-                        html.Span("Dr. Admin", style={"fontWeight": "700", "marginRight": "15px", "color": "var(--text-main)", "fontSize": "15px"}),
-                        html.Img(src="https://ui-avatars.com/api/?name=Admin&background=4318FF&color=fff", style={"borderRadius": "50%", "width": "45px", "boxShadow": "0px 4px 10px rgba(0,0,0,0.1)"})
-                    ], style={
-                        "display": "flex", 
-                        "alignItems": "center", 
-                        "backgroundColor": "var(--card-bg)", 
-                        "border": "1px solid var(--grid-color)", 
-                        "padding": "6px 20px", 
-                        "borderRadius": "30px", 
-                        "transition": "all 0.3s"
-                    })
-                ], style={"textAlign": "right", "display": "flex", "alignItems": "center", "justifyContent": "flex-end"}), 
-                width=4
-            )
-        ], style={"marginBottom": "40px", "marginTop": "10px"}),
+                        html.Button(
+                            html.I(className="fas fa-file-pdf"), 
+                            id="btn-pdf", 
+                            title="Скачать PDF график", 
+                            className="no-print",
+                            style={
+                                "background": "transparent", 
+                                "border": "none", 
+                                "fontSize": "22px", 
+                                "color": "#E11D48", 
+                                "cursor": "pointer", 
+                                "marginRight": "20px"
+                            }
+                        ),
+                        html.Button(
+                            html.I(id="theme-icon", className="fas fa-moon"), 
+                            id="theme-toggle", 
+                            className="no-print",
+                            style={
+                                "background": "transparent", 
+                                "border": "none", 
+                                "fontSize": "22px", 
+                                "color": "var(--text-muted)", 
+                                "cursor": "pointer", 
+                                "marginRight": "25px"
+                            }
+                        ),
+                        html.Div([
+                            html.Span("Dr. Admin", style={"fontWeight": "700", "marginRight": "15px", "color": "var(--text-main)", "fontSize": "15px"}), 
+                            html.Img(src="https://ui-avatars.com/api/?name=Admin&background=4318FF&color=fff", style={"borderRadius": "50%", "width": "45px", "boxShadow": "0px 4px 10px rgba(0,0,0,0.1)"})
+                        ], style={"display": "flex", "alignItems": "center", "backgroundColor": "var(--card-bg)", "border": "1px solid var(--grid-color)", "padding": "6px 20px", "borderRadius": "30px"})
+                    ], style={"textAlign": "right", "display": "flex", "alignItems": "center", "justifyContent": "flex-end"}), 
+                    width=6
+                )
+            ], style={"marginBottom": "40px", "marginTop": "10px"}),
 
-        # Карточки KPI
-        dbc.Row([
-            dbc.Col(create_kpi_card("ОБЩАЯ СУММА", "kpi-sum", "fas fa-wallet", "#4318FF", "rgba(67, 24, 255, 0.1)"), xl=3, lg=6, md=6, sm=12, className="mb-4"),
-            dbc.Col(create_kpi_card("УНИКАЛЬНЫХ ПАЦИЕНТОВ", "kpi-patients", "fas fa-user-injured", "#FF7D00", "rgba(255, 125, 0, 0.1)"), xl=3, lg=6, md=6, sm=12, className="mb-4"),
-            dbc.Col(create_kpi_card("ОКАЗАНО УСЛУГ (МЭС)", "kpi-mes", "fas fa-file-medical-alt", "#01B574", "rgba(1, 181, 116, 0.1)"), xl=3, lg=6, md=6, sm=12, className="mb-4"),
-            dbc.Col(create_kpi_card("АКТИВНЫХ ОТДЕЛЕНИЙ", "kpi-depts", "fas fa-hospital", "#39B8FF", "rgba(57, 184, 255, 0.1)"), xl=3, lg=6, md=6, sm=12, className="mb-4"),
-        ]),
-
-        # Главный График
-        dbc.Row([
-            dbc.Col(
-                html.Div([
-                    html.H4("Аналитика по времени", id="main-chart-title", style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px", "letterSpacing": "-0.5px"}),
-                    
-                    # --- НОВЫЙ БЛОК ---
-                    html.Div(id="smart-insights-container", style={
-                        "marginBottom": "20px",
-                        "padding": "16px 20px",
-                        "backgroundColor": "var(--primary-light)",
-                        "borderRadius": "14px",
-                        "border": "1px solid var(--grid-color)",
-                        "fontSize": "15px",
-                        "display": "flex",
-                        "flexDirection": "column",
-                        "alignItems": "flex-start",
-                        "transition": "all 0.3s"
-                    }),
-
-                    dcc.Graph(id="main-line-chart", config={'displayModeBar': False}, style={"height": "480px"})
-                ], style={
-                    "backgroundColor": "var(--card-bg)", 
-                    "borderRadius": "24px", 
-                    "padding": "35px", 
-                    "boxShadow": "var(--shadow)", 
-                    "transition": "all 0.3s"
-                }), 
-                width=12
-            )
-        ]),
-
-        # БЛОК: SQL
-        dbc.Row([
-            dbc.Col(
-                html.Div([
-                    html.H4([html.I(className="fas fa-terminal", style={"marginRight": "12px", "color": "var(--primary)"}), "SQL-Песочница"], style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px", "letterSpacing": "-0.5px"}),
-                    html.P("Напишите SQL-запрос. При выполнении программа перерисует верхний главный график! (Первая колонка станет осью X, числовые колонки — осью Y).", style={"color": "var(--text-muted)", "fontSize": "14px", "marginBottom": "20px"}),
-                    
-                    dcc.Textarea(
-                        id="sql-input",
-                        className="sql-editor",
-                        placeholder="Введите ваш SQL запрос здесь...",
-                        value="SELECT \n  [Наименование отделения], \n  COUNT(*) as [Количество услуг] \nFROM medical_data \nGROUP BY [Наименование отделения] \nORDER BY [Количество услуг] DESC \nLIMIT 7;"
-                    ),
-                    
-                    dbc.Button(
-                        [html.I(className="fas fa-play", style={"marginRight": "10px"}), "Нарисовать график из SQL"], 
-                        id="btn-execute-sql", 
-                        style={"backgroundColor": "var(--primary)", "border": "none", "borderRadius": "12px", "padding": "12px 24px", "fontWeight": "600", "marginTop": "15px", "boxShadow": "0px 8px 15px rgba(67, 24, 255, 0.2)"}
-                    ),
-                    
-                    html.Div(id="sql-error", style={"color": "#E11D48", "marginTop": "15px", "fontWeight": "600", "fontSize": "14px"}),
-                ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)", "transition": "all 0.3s", "height": "100%"}), 
-                xl=8, lg=12, className="mb-4"
+            # KPI Карточки
+            dbc.Row(
+                className="no-print",
+                children=[
+                    dbc.Col(create_kpi_card("ОБЩАЯ СУММА", "kpi-sum", "fas fa-wallet", "#4318FF", "rgba(67, 24, 255, 0.1)"), xl=3, lg=6, md=6, sm=12, className="mb-4"),
+                    dbc.Col(create_kpi_card("УНИКАЛЬНЫХ ПАЦИЕНТОВ", "kpi-patients", "fas fa-user-injured", "#FF7D00", "rgba(255, 125, 0, 0.1)"), xl=3, lg=6, md=6, sm=12, className="mb-4"),
+                    dbc.Col(create_kpi_card("ОКАЗАНО УСЛУГ (МЭС)", "kpi-mes", "fas fa-file-medical-alt", "#01B574", "rgba(1, 181, 116, 0.1)"), xl=3, lg=6, md=6, sm=12, className="mb-4"),
+                    dbc.Col(create_kpi_card("АКТИВНЫХ ОТДЕЛЕНИЙ", "kpi-depts", "fas fa-hospital", "#39B8FF", "rgba(57, 184, 255, 0.1)"), xl=3, lg=6, md=6, sm=12, className="mb-4"),
+                ]
             ),
 
-            # Шпаргалка по базе данных
-            dbc.Col(
-                html.Div([
-                    html.H5([html.I(className="fas fa-database", style={"marginRight": "10px", "color": "#01B574"}), "Схема Данных"], style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "25px"}),
-                    
-                    html.Div([
-                        html.Span("Таблица:", style={"color": "var(--text-muted)", "fontSize": "13px", "fontWeight": "600", "textTransform": "uppercase", "marginRight": "10px"}),
-                        html.Span("medical_data", style={"color": "var(--primary)", "fontWeight": "700", "fontSize": "16px", "backgroundColor": "var(--primary-light)", "padding": "4px 10px", "borderRadius": "8px"})
-                    ], style={"marginBottom": "25px"}),
-                    
-                    html.P("Доступные колонки:", style={"color": "var(--text-muted)", "fontSize": "13px", "fontWeight": "600", "textTransform": "uppercase", "marginBottom": "15px"}),
-                    
-                    html.Div([
-                        html.Span("Период", className="schema-badge"),
-                        html.Span("Наименование отделения", className="schema-badge"),
-                        html.Span("Код Услуги", className="schema-badge"),
-                        html.Span("Наименование профиля", className="schema-badge"),
-                        html.Span("ИД пациента в версии счета", className="schema-badge"),
-                        html.Span("Сумма", className="schema-badge")
-                    ]),
-                    
-                    html.Div([
-                        html.I(className="fas fa-info-circle", style={"marginRight": "8px", "color": "var(--text-muted)"}),
-                        html.Span("Если в названии колонки есть пробелы, оборачивайте её в квадратные скобки: ", style={"color": "var(--text-muted)"}),
-                        html.Code("[Наименование отделения]", style={"color": "var(--text-main)", "fontWeight": "600"})
-                    ], style={"marginTop": "30px", "fontSize": "13px", "backgroundColor": "var(--bg-color)", "padding": "15px", "borderRadius": "12px", "border": "1px solid var(--grid-color)"})
-                    
-                ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)", "transition": "all 0.3s", "height": "100%"}), 
-                xl=4, lg=12, className="mb-4"
-            )
-        ], className="mt-4")
+            # ОТДЕЛЬНЫЙ КОНТЕЙНЕР ДЛЯ PDF
+            html.Div(
+                id="pdf-export-container", 
+                children=[
+                    dbc.Row([
+                        dbc.Col(
+                            html.Div([
+                                html.H4("Аналитика по времени", id="main-chart-title", style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px", "letterSpacing": "-0.5px"}),
+                                
+                                dcc.Loading(
+                                    type="dot", 
+                                    color="var(--primary)",
+                                    children=[
+                                        html.Div(
+                                            id="smart-insights-container", 
+                                            style={
+                                                "marginBottom": "20px", 
+                                                "padding": "16px 20px", 
+                                                "backgroundColor": "var(--primary-light)", 
+                                                "borderRadius": "14px", 
+                                                "border": "1px solid var(--grid-color)", 
+                                                "fontSize": "15px", 
+                                                "display": "flex", 
+                                                "flexDirection": "column", 
+                                                "alignItems": "flex-start"
+                                            }
+                                        ),
+                                        dcc.Graph(
+                                            id="main-line-chart", 
+                                            config={'displayModeBar': False}, 
+                                            style={"height": "480px"}
+                                        )
+                                    ]
+                                )
+                            ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)"}), 
+                            width=12
+                        )
+                    ])
+                ]
+            ), 
 
-    ], style={"marginLeft": "340px", "padding": "40px 50px", "minHeight": "100vh"})
+            # БЛОК: SQL Песочница
+            dbc.Row(
+                className="mt-4 no-print",
+                children=[
+                    dbc.Col(
+                        html.Div([
+                            html.H4([html.I(className="fas fa-terminal", style={"marginRight": "12px", "color": "var(--primary)"}), "SQL-Песочница (DuckDB)"], style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px"}),
+                            html.P("Напишите SQL-запрос. Работает через сверхбыстрый In-Memory движок.", style={"color": "var(--text-muted)", "fontSize": "14px", "marginBottom": "20px"}),
+                            dcc.Textarea(
+                                id="sql-input", 
+                                className="sql-editor", 
+                                placeholder="Введите ваш SQL запрос...", 
+                                value="SELECT \n  [Наименование отделения], \n  COUNT(*) as [Количество услуг] \nFROM medical_data \nGROUP BY [Наименование отделения] \nORDER BY [Количество услуг] DESC \nLIMIT 7;"
+                            ),
+                            dbc.Button(
+                                [html.I(className="fas fa-play", style={"marginRight": "10px"}), "Выполнить SQL"], 
+                                id="btn-execute-sql", 
+                                style={"backgroundColor": "var(--primary)", "border": "none", "borderRadius": "12px", "padding": "12px 24px", "fontWeight": "600", "marginTop": "15px"}
+                            ),
+                            html.Div(id="sql-error", style={"color": "#E11D48", "marginTop": "15px", "fontWeight": "600", "fontSize": "14px"}),
+                        ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)", "height": "100%"}), 
+                        xl=8, lg=12, className="mb-4"
+                    ),
+                    dbc.Col(
+                        html.Div([
+                            html.H5([html.I(className="fas fa-database", style={"marginRight": "10px", "color": "#01B574"}), "Схема Данных"], style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "25px"}),
+                            
+                            html.Div([
+                                html.Span("Таблица:", style={"color": "var(--text-muted)", "fontSize": "13px", "fontWeight": "600", "textTransform": "uppercase", "marginRight": "10px"}),
+                                html.Span("medical_data", style={"color": "var(--primary)", "fontWeight": "700", "fontSize": "16px", "backgroundColor": "var(--primary-light)", "padding": "4px 10px", "borderRadius": "8px"})
+                            ], style={"marginBottom": "25px"}),
+                            
+                            html.P("Доступные колонки:", style={"color": "var(--text-muted)", "fontSize": "13px", "fontWeight": "600", "textTransform": "uppercase", "marginBottom": "15px"}),
+                            
+                            html.Div([
+                                html.Span("Период", className="schema-badge"), 
+                                html.Span("Наименование отделения", className="schema-badge"), 
+                                html.Span("Код Услуги", className="schema-badge"), 
+                                html.Span("Наименование профиля", className="schema-badge"), 
+                                html.Span("ИД пациента в версии счета", className="schema-badge"), 
+                                html.Span("Сумма", className="schema-badge")
+                            ]),
+                            
+                            html.Div([
+                                html.I(className="fas fa-info-circle", style={"marginRight": "8px", "color": "var(--text-muted)"}),
+                                html.Span("Если в названии колонки есть пробелы, оборачивайте её в квадратные скобки: ", style={"color": "var(--text-muted)"}),
+                                html.Code("[Наименование отделения]", style={"color": "var(--text-main)", "fontWeight": "600"})
+                            ], style={"marginTop": "30px", "fontSize": "13px", "backgroundColor": "var(--bg-color)", "padding": "15px", "borderRadius": "12px", "border": "1px solid var(--grid-color)"})
+                            
+                        ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)", "height": "100%"}), 
+                        xl=4, lg=12, className="mb-4"
+                    )
+                ]
+            )
+        ]
+    ),
+
+    # МОДАЛЬНОЕ МОДАЛЬНОЕ ОКНО
+    dbc.Modal(
+        [
+            dbc.ModalHeader(dbc.ModalTitle("Расширенная информация", id="modal-title", style={"fontWeight": "800", "color": "var(--primary)"})),
+            dbc.ModalBody(id="modal-body", style={"padding": "25px"}),
+            dbc.ModalFooter(
+                dbc.Button("Закрыть", id="close-modal", className="ms-auto", style={"borderRadius": "12px", "backgroundColor": "var(--text-muted)", "border": "none"})
+            )
+        ], 
+        id="drilldown-modal", 
+        is_open=False, 
+        size="lg", 
+        centered=True
+    )
 ])
 
+
+# --- КЛИЕНТСКИЕ КОЛЛБЭКИ ---
 
 app.clientside_callback(
     """
     function(n_clicks, current_theme) {
-        if (!n_clicks) { return window.dash_clientside.no_update; }
+        if (!n_clicks) {
+            return window.dash_clientside.no_update;
+        }
         const newTheme = current_theme === 'light' ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', newTheme);
         return newTheme;
     }
     """,
-    Output("theme-store", "data"),
-    Input("theme-toggle", "n_clicks"),
+    Output("theme-store", "data"), 
+    Input("theme-toggle", "n_clicks"), 
     State("theme-store", "data")
 )
 
@@ -651,95 +622,156 @@ app.clientside_callback(
     Output("theme-icon", "className"), 
     Input("theme-store", "data")
 )
-def update_icon(theme: str) -> str:
-    """Обновляет иконку луны/солнца при смене темы."""
+def update_icon(theme): 
     if theme == "dark":
         return "fas fa-sun"
-    return "fas fa-moon"
+    else:
+        return "fas fa-moon"
 
+# Экспорт PDF
+app.clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks) {
+            var element = document.getElementById('pdf-export-container');
+
+            var w = element.offsetWidth;
+            var h = element.offsetHeight;
+            
+            var opt = {
+              margin: 20,
+              filename: 'Clinical_Chart_Report.pdf',
+              image: { type: 'jpeg', quality: 1.0 },
+              html2canvas: { scale: 2, useCORS: true, logging: false },
+              // 2. ГЛАВНЫЙ ТРЮК: Задаем размер PDF файла точно по размеру элемента.
+              // Прибавляем по 40px, чтобы учесть margin (20px сверху/снизу и слева/справа).
+              // Теперь никаких пустых листов и разрывов!
+              jsPDF: { unit: 'px', format: [w + 40, h + 40], orientation: 'landscape' }
+            };
+
+            html2pdf().set(opt).from(element).save();
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("btn-pdf", "id"), 
+    Input("btn-pdf", "n_clicks"),
+    prevent_initial_call=True
+)
+
+
+# --- СЕРВЕРНЫЕ КОЛЛБЭКИ ---
 
 @app.callback(
-    [Output("f-year", "options"), Output("f-month", "options"), 
-     Output("f-dept", "options"), Output("f-mes", "options")],
-    [Input("f-year", "value"), Input("f-month", "value"),
-     Input("f-dept", "value"), Input("f-mes", "value")]
+    [
+        Output("f-year", "options"), 
+        Output("f-month", "options"), 
+        Output("f-dept", "options"), 
+        Output("f-mes", "options")
+    ], 
+    [
+        Input("f-year", "value"), 
+        Input("f-month", "value"), 
+        Input("f-dept", "value"), 
+        Input("f-mes", "value")
+    ]
 )
 def update_smart_filters(years, months, depts, mes_list):
-    """
-    Умные каскадные фильтры (Faceted Search).
-    Обновляет доступные опции в фильтрах на основе того, что выбрано в других фильтрах.
-    """
+    """Обновляет выпадающие списки фильтров."""
     df = get_optimized_data()
     
     if df.empty: 
         return [[], [], [], []]
     
-    def get_mask_for(skip_col: str) -> pd.Series:
+    def get_mask_for(skip_col: str):
         mask = pd.Series(True, index=df.index)
-        if skip_col != 'Year' and years and 'Year' in df.columns: 
+        if skip_col != 'Year' and years: 
             mask &= df['Year'].isin(years)
-        if skip_col != 'Month' and months and 'Month_Name' in df.columns: 
+        if skip_col != 'Month' and months: 
             mask &= df['Month_Name'].isin(months)
-        if skip_col != 'Dept' and depts and 'Наименование отделения' in df.columns: 
+        if skip_col != 'Dept' and depts: 
             mask &= df['Наименование отделения'].isin(depts)
-        if skip_col != 'MES' and mes_list and 'Код Услуги' in df.columns: 
+        if skip_col != 'MES' and mes_list: 
             mask &= df['Код Услуги'].isin(mes_list)
         return mask
-
-    opts_year = sorted(df.loc[get_mask_for('Year'), 'Year'].unique()) if 'Year' in df.columns else []
-    
+        
+    opts_year = []
+    if 'Year' in df.columns:
+        opts_year = sorted(df.loc[get_mask_for('Year'), 'Year'].unique())
+        
+    opts_month = []
     if 'Month_Num' in df.columns:
-        m_df = df.loc[get_mask_for('Month')].drop_duplicates(subset=['Month_Num', 'Month_Name']).sort_values('Month_Num')
-        opts_month = [{"label": row['Month_Name'], "value": row['Month_Name']} for _, row in m_df.iterrows()]
-    else: 
-        opts_month = []
-
-    opts_dept = sorted(df.loc[get_mask_for('Dept'), 'Наименование отделения'].dropna().unique()) if 'Наименование отделения' in df.columns else []
-    opts_mes = sorted(df.loc[get_mask_for('MES'), 'Код Услуги'].dropna().unique()) if 'Код Услуги' in df.columns else []
+        unique_months = df.loc[get_mask_for('Month')].drop_duplicates(['Month_Num', 'Month_Name']).sort_values('Month_Num')
+        for _, row in unique_months.iterrows():
+            opts_month.append({"label": row['Month_Name'], "value": row['Month_Name']})
+            
+    opts_dept = []
+    if 'Наименование отделения' in df.columns:
+        opts_dept = sorted(df.loc[get_mask_for('Dept'), 'Наименование отделения'].dropna().unique())
+        
+    opts_mes = []
+    if 'Код Услуги' in df.columns:
+        opts_mes = sorted(df.loc[get_mask_for('MES'), 'Код Услуги'].dropna().unique())
     
     return [opts_year, opts_month, opts_dept, opts_mes]
 
 
 @app.callback(
-    [Output("main-line-chart", "figure"), Output("main-chart-title", "children"),
-     Output("kpi-sum", "children"), Output("kpi-patients", "children"), 
-     Output("kpi-mes", "children"), Output("kpi-depts", "children"),
-     Output("smart-insights-container", "children")],
-    [Input("f-year", "value"), Input("f-month", "value"),
-     Input("f-dept", "value"), Input("f-mes", "value"), 
-     Input("f-metric", "value"), Input("f-group-by", "value"), Input("theme-store", "data")]
+    [
+        Output("main-line-chart", "figure"), 
+        Output("main-chart-title", "children"), 
+        Output("kpi-sum", "children"), 
+        Output("kpi-patients", "children"), 
+        Output("kpi-mes", "children"), 
+        Output("kpi-depts", "children"), 
+        Output("smart-insights-container", "children")
+    ],
+    [
+        Input("f-year", "value"), 
+        Input("f-month", "value"), 
+        Input("f-dept", "value"), 
+        Input("f-mes", "value"), 
+        Input("f-metric", "value"), 
+        Input("f-group-by", "value"), 
+        Input("theme-store", "data")
+    ]
 )
 def update_standard_dashboard(years, months, depts, mes_list, metric, group_by_col, theme):
-    """
-    Основной метод отрисовки Дашборда. 
-    Рассчитывает показатели и строит график на основе выбранных метрик и группировок.
-    """
+    """Главная функция отрисовки стандартного дашборда."""
     df = get_optimized_data()
     insight_html = html.Div("Загрузка данных...", style={"color": "var(--text-muted)"})
-
+    
     if df.empty: 
-        return go.Figure(), "Аналитика по времени", "0,00 ₽", "0", "0", "0", insight_html
+        return go.Figure(), "Аналитика по времени", "0 ₽", "0", "0", "0", insight_html
 
     mask = pd.Series(True, index=df.index)
-    if years and 'Year' in df.columns: 
+    if years: 
         mask &= df['Year'].isin(years)
-    if months and 'Month_Name' in df.columns: 
+    if months: 
         mask &= df['Month_Name'].isin(months)
-    if depts and 'Наименование отделения' in df.columns: 
+    if depts: 
         mask &= df['Наименование отделения'].isin(depts)
-    if mes_list and 'Код Услуги' in df.columns: 
+    if mes_list: 
         mask &= df['Код Услуги'].isin(mes_list)
 
     filtered_df = df[mask].copy()
 
     if 'Сумма' in filtered_df.columns:
-        total_sum = f"{filtered_df['Сумма'].sum():,.2f}".replace(",", " ").replace(".", ",") + " ₽"
-    else: 
-        total_sum = "0,00 ₽"
+        total_sum = f"{filtered_df['Сумма'].sum():,.2f} ₽".replace(",", " ").replace(".", ",")
+    else:
+        total_sum = "0 ₽"
         
-    total_patients = f"{filtered_df['ИД пациента в версии счета'].nunique()}" if 'ИД пациента в версии счета' in filtered_df.columns else "0"
+    if 'ИД пациента в версии счета' in filtered_df.columns:
+        total_patients = f"{filtered_df['ИД пациента в версии счета'].nunique()}"
+    else:
+        total_patients = "0"
+        
     total_mes = f"{len(filtered_df)}"
-    active_depts = f"{filtered_df['Наименование отделения'].nunique()}" if 'Наименование отделения' in filtered_df.columns else "0"
+    
+    if 'Наименование отделения' in filtered_df.columns:
+        active_depts = f"{filtered_df['Наименование отделения'].nunique()}"
+    else:
+        active_depts = "0"
 
     fig = go.Figure()
     x_range, tickvals, ticktext = None, [], []
@@ -750,107 +782,116 @@ def update_standard_dashboard(years, months, depts, mes_list, metric, group_by_c
         tickvals = unique_dates
         ticktext = [f"{MONTHS_RU[pd.Timestamp(d).month]} {pd.Timestamp(d).year}" for d in unique_dates]
 
-    # --- РАСЧЕТ ДЛЯ БЛОКА С ЗАЩИТАМИ И ДЕТАЛИЗАЦИЕЙ ---
+    # --- Расчет Сводки ---
     try:
         if not filtered_df.empty and 'dt' in filtered_df.columns:
             filtered_df['YearMonth'] = filtered_df['dt'].dt.to_period('M')
             
-            if metric == "sum" and 'Сумма' in filtered_df.columns:
+            if metric == "sum": 
                 trend_df = filtered_df.groupby('YearMonth', observed=True)['Сумма'].sum().reset_index()
                 metric_name = "Сумма"
                 def fmt(x): return f"{x:,.2f} ₽".replace(',', ' ').replace('.', ',')
-            elif metric == "count_patients" and 'ИД пациента в версии счета' in filtered_df.columns:
+            elif metric == "count_patients": 
                 trend_df = filtered_df.groupby('YearMonth', observed=True)['ИД пациента в версии счета'].nunique().reset_index(name='val')
                 metric_name = "Уникальные пациенты"
                 def fmt(x): return f"{x:,.0f} чел.".replace(',', ' ')
-            else:
+            else: 
                 trend_df = filtered_df.groupby('YearMonth', observed=True).size().reset_index(name='val')
                 metric_name = "Количество услуг (МЭС)"
                 def fmt(x): return f"{x:,.0f} ед.".replace(',', ' ')
-
+            
             trend_df = trend_df.sort_values('YearMonth')
             
             if trend_df.empty:
                 insight_html = html.Div([
-                    html.I(className="fas fa-exclamation-circle", style={"color": "#FF7D00", "marginRight": "12px", "fontSize": "20px"}),
-                    html.Span("После применения фильтров данные для сводки отсутствуют.", style={"color": "var(--text-muted)"})
+                    html.I(className="fas fa-exclamation-circle", style={"color": "#FF7D00", "marginRight": "12px"}), 
+                    html.Span("Данные отсутствуют.", style={"color": "var(--text-muted)"})
                 ])
             else:
-                # 1. Капсулы с детализацией по каждому месяцу
                 breakdown_badges = []
                 prev_val = None
-
+                
                 for _, row in trend_df.iterrows():
-                    m_num = row['YearMonth'].month
-                    m_name = MONTHS_RU.get(m_num, str(m_num))
+                    m_name = MONTHS_RU.get(row['YearMonth'].month, "")
                     y_val = row['YearMonth'].year
                     val = row['Сумма'] if metric == 'sum' else row['val']
                     
-                    # --- Вычисляем сравнение с предыдущим ---
                     mom_element = ""
                     if prev_val is not None:
                         diff_mom = val - prev_val
                         perc_mom = (diff_mom / prev_val * 100) if prev_val != 0 else 0
                         
                         if diff_mom > 0:
-                            m_color, m_icon, m_sign = "#01B574", "↑", "+"
+                            m_color = "#01B574"
+                            m_icon = "↑"
+                            m_sign = "+"
                         elif diff_mom < 0:
-                            m_color, m_icon, m_sign = "#E11D48", "↓", ""
+                            m_color = "#E11D48"
+                            m_icon = "↓"
+                            m_sign = ""
                         else:
-                            m_color, m_icon, m_sign = "var(--text-muted)", "=", ""
+                            m_color = "var(--text-muted)"
+                            m_icon = "="
+                            m_sign = ""
                             
-                        # Форматируем микро-дельту (Убираем копейки)
                         diff_str = f"{abs(diff_mom):,.0f}".replace(',', ' ')
                         mom_element = html.Span([
-                            html.Span(f" {m_icon} ", style={"margin": "0 4px"}),
+                            html.Span(f" {m_icon} ", style={"margin": "0 4px"}), 
                             f"{m_sign}{diff_str} ({m_sign}{perc_mom:.1f}%)"
                         ], style={"color": m_color, "fontSize": "12px", "fontWeight": "700"})
                     
-                    # Создаем капсулу, объединяя основное значение и дельту
                     badge = html.Div([
-                        html.Span(f"{m_name} {y_val}: ", style={"color": "var(--text-muted)", "marginRight": "4px"}),
-                        html.Span(f"{fmt(val)}", style={"color": "var(--text-main)"}),
+                        html.Span(f"{m_name} {y_val}: ", style={"color": "var(--text-muted)", "marginRight": "4px"}), 
+                        html.Span(f"{fmt(val)}", style={"color": "var(--text-main)"}), 
                         mom_element
                     ], style={
-                        "backgroundColor": "var(--card-bg)",
-                        "border": "1px solid var(--grid-color)",
-                        "borderRadius": "8px",
-                        "padding": "6px 12px",
-                        "margin": "4px",
-                        "fontSize": "13px",
-                        "fontWeight": "600",
-                        "display": "inline-flex",
-                        "alignItems": "center",
-                        "boxShadow": "0px 2px 4px rgba(0,0,0,0.02)"
+                        "backgroundColor": "var(--card-bg)", 
+                        "border": "1px solid var(--grid-color)", 
+                        "borderRadius": "8px", 
+                        "padding": "6px 12px", 
+                        "margin": "4px", 
+                        "fontSize": "13px", 
+                        "fontWeight": "600", 
+                        "display": "inline-flex", 
+                        "alignItems": "center"
                     })
                     breakdown_badges.append(badge)
                     prev_val = val
 
-                # 2. Основной текст о разнице
                 if len(trend_df) >= 2:
-                    first_row = trend_df.iloc[0]
-                    last_row = trend_df.iloc[-1]
-                    
-                    first_val = first_row['Сумма'] if metric == 'sum' else first_row['val']
-                    last_val = last_row['Сумма'] if metric == 'sum' else last_row['val']
-                    
-                    diff = last_val - first_val
-                    perc = (diff / first_val * 100) if first_val != 0 else 0
-                    
-                    first_m_text = f"{MONTHS_RU.get(first_row['YearMonth'].month, '')} {first_row['YearMonth'].year}"
-                    last_m_text = f"{MONTHS_RU.get(last_row['YearMonth'].month, '')} {last_row['YearMonth'].year}"
-                    
-                    if diff > 0:
-                        verb, color, icon, sign = "увеличился", "#01B574", "fas fa-arrow-trend-up", "+"
-                    elif diff < 0:
-                        verb, color, icon, sign = "снизился", "#E11D48", "fas fa-arrow-trend-down", ""
+                    if metric == 'sum':
+                        first_val = trend_df.iloc[0]['Сумма']
+                        last_val = trend_df.iloc[-1]['Сумма']
                     else:
-                        verb, color, icon, sign = "не изменился", "var(--text-muted)", "fas fa-minus", ""
-
+                        first_val = trend_df.iloc[0]['val']
+                        last_val = trend_df.iloc[-1]['val']
+                        
+                    diff = last_val - first_val
+                    if first_val != 0:
+                        perc = (diff / first_val) * 100
+                    else:
+                        perc = 0
+                        
+                    if diff > 0:
+                        verb = "увеличился"
+                        color = "#01B574"
+                        icon = "fas fa-arrow-trend-up"
+                        sign = "+"
+                    elif diff < 0:
+                        verb = "снизился"
+                        color = "#E11D48"
+                        icon = "fas fa-arrow-trend-down"
+                        sign = ""
+                    else:
+                        verb = "не изменился"
+                        color = "var(--text-muted)"
+                        icon = "fas fa-minus"
+                        sign = ""
+                        
                     diff_block = html.Div([
-                        html.Span(f"Показатель «{metric_name}» {verb} с {fmt(first_val)} ({first_m_text}) до {fmt(last_val)} ({last_m_text}). Разница составила: ", style={"color": "var(--text-main)"}),
+                        html.Span(f"Показатель «{metric_name}» {verb} с {fmt(first_val)} до {fmt(last_val)}. Разница: ", style={"color": "var(--text-main)"}), 
                         html.Span([
-                            html.I(className=icon, style={"marginRight": "6px"}),
+                            html.I(className=icon, style={"marginRight": "6px"}), 
                             f"{sign}{fmt(diff)} ({sign}{perc:.1f}%)"
                         ], style={
                             "color": color, 
@@ -858,143 +899,241 @@ def update_standard_dashboard(years, months, depts, mes_list, metric, group_by_c
                             "backgroundColor": f"{color}1A", 
                             "padding": "4px 10px", 
                             "borderRadius": "8px", 
-                            "marginLeft": "6px",
-                            "display": "inline-block"
+                            "marginLeft": "6px"
                         })
                     ], style={"marginBottom": "12px"})
-                else:
+                else: 
                     diff_block = html.Div([
-                        html.Span("Данные представлены за один месяц. Выберите больше периодов для сравнения динамики.", style={"color": "var(--text-muted)", "fontStyle": "italic"})
+                        html.Span("Выберите больше периодов для сравнения динамики.", style={"color": "var(--text-muted)", "fontStyle": "italic"})
                     ], style={"marginBottom": "12px"})
-
+                    
                 insight_html = html.Div([
                     html.Div([
-                        html.I(className="fas fa-robot", style={"color": "var(--primary)", "marginRight": "12px", "fontSize": "20px"}),
-                        html.Span("Сводка:", style={"fontWeight": "800", "color": "var(--primary)", "marginRight": "8px", "fontSize": "16px"}),
-                    ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px"}),
-                    diff_block,
+                        html.I(className="fas fa-robot", style={"color": "var(--primary)", "marginRight": "12px", "fontSize": "20px"}), 
+                        html.Span("Сводка:", style={"fontWeight": "800", "color": "var(--primary)", "marginRight": "8px"})
+                    ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px"}), 
+                    diff_block, 
                     html.Div(breakdown_badges, style={"display": "flex", "flexWrap": "wrap", "marginTop": "5px"})
-                ], style={"display": "flex", "flexDirection": "column", "width": "100%"})
-
-        else:
-             insight_html = html.Div([
-                    html.I(className="fas fa-exclamation-triangle", style={"color": "#FF7D00", "marginRight": "12px", "fontSize": "20px"}),
-                    html.Span("Данные отсутствуют. Измените параметры фильтров.", style={"color": "var(--text-muted)"})
                 ])
-    except Exception as e:
-        insight_html = html.Div([
-            html.I(className="fas fa-bomb", style={"color": "#E11D48", "marginRight": "12px", "fontSize": "20px"}),
-            html.Span(f"Ошибка при формировании AI-Сводки: {str(e)}", style={"color": "#E11D48", "fontWeight": "600"})
-        ])
+    except Exception as e: 
+        insight_html = html.Div(f"Ошибка Сводки: {str(e)}", style={"color": "#E11D48"})
 
-
+    # --- Построение линий ---
     if not filtered_df.empty and 'dt' in filtered_df.columns and group_by_col in filtered_df.columns:
         
         labels_map = {
-            "Наименование отделения": "Отделение",
-            "Код Услуги": "Код МЭС",
+            "Наименование отделения": "Отделение", 
+            "Код Услуги": "Код МЭС", 
             "Наименование профиля": "Профиль"
         }
         hover_title = labels_map.get(group_by_col, "Значение")
-
-        if metric == "sum" and 'Сумма' in filtered_df.columns:
+        
+        if metric == "sum": 
             trend = filtered_df.groupby(['dt', group_by_col], observed=True)['Сумма'].sum().reset_index()
             y_col = 'Сумма'
-            hover_template = f"<b>{hover_title}:</b> %{{fullData.name}}<br><b>Сумма:</b> %{{y:,.2f}} ₽<extra></extra>"
-            
-        elif metric == "count_patients" and 'ИД пациента в версии счета' in filtered_df.columns:
-            trend = filtered_df.groupby(['dt', group_by_col], observed=True)['ИД пациента в версии счета'].nunique().reset_index(name='Пациенты')
-            y_col = 'Пациенты'
-            hover_template = f"<b>{hover_title}:</b> %{{fullData.name}}<br><b>Пациентов:</b> %{{y:,.0f}} чел.<extra></extra>"
-            
-        else:
-            trend = filtered_df.groupby(['dt', group_by_col], observed=True).size().reset_index(name='Кол-во МЭС')
-            y_col = 'Кол-во МЭС'
-            hover_template = f"<b>{hover_title}:</b> %{{fullData.name}}<br><b>Оказано МЭС:</b> %{{y:,.0f}} ед.<extra></extra>"
+            ht = f"<b>Дата:</b> %{{x}}<br><b>{hover_title}:</b> %{{fullData.name}}<br><b>Сумма:</b> %{{y:,.2f}} ₽<extra></extra>"
+        elif metric == "count_patients": 
+            trend = filtered_df.groupby(['dt', group_by_col], observed=True)['ИД пациента в версии счета'].nunique().reset_index(name='val')
+            y_col = 'val'
+            ht = f"<b>Дата:</b> %{{x}}<br><b>{hover_title}:</b> %{{fullData.name}}<br><b>Пациентов:</b> %{{y:,.0f}} чел.<extra></extra>"
+        else: 
+            trend = filtered_df.groupby(['dt', group_by_col], observed=True).size().reset_index(name='val')
+            y_col = 'val'
+            ht = f"<b>Дата:</b> %{{x}}<br><b>{hover_title}:</b> %{{fullData.name}}<br><b>Оказано:</b> %{{y:,.0f}} ед.<extra></extra>"
 
         trend = trend.sort_values('dt')
-
+        
         colors = [
             {"hex": "#4318FF", "rgba": "rgba(67, 24, 255, 0.15)"}, 
-            {"hex": "#FF7D00", "rgba": "rgba(255, 125, 0, 0.15)"},
+            {"hex": "#FF7D00", "rgba": "rgba(255, 125, 0, 0.15)"}, 
             {"hex": "#01B574", "rgba": "rgba(1, 181, 116, 0.15)"}, 
-            {"hex": "#39B8FF", "rgba": "rgba(57, 184, 255, 0.15)"},
-            {"hex": "#E11D48", "rgba": "rgba(225, 29, 72, 0.15)"}, 
-            {"hex": "#8B5CF6", "rgba": "rgba(139, 92, 246, 0.15)"}
+            {"hex": "#39B8FF", "rgba": "rgba(57, 184, 255, 0.15)"}, 
+            {"hex": "#E11D48", "rgba": "rgba(225, 29, 72, 0.15)"}
         ]
-
+        
         for i, group_val in enumerate(trend[group_by_col].unique()):
-            group_data = trend[trend[group_by_col] == group_val]
+            g_data = trend[trend[group_by_col] == group_val]
             c = colors[i % len(colors)]
+
+            custom_data_formatted = [f"STD|{group_val}"] * len(g_data)
             
             fig.add_trace(go.Scatter(
-                x=group_data['dt'], 
-                y=group_data[y_col], 
+                x=g_data['dt'], 
+                y=g_data[y_col], 
                 name=str(group_val), 
-                mode='lines+markers',
-                cliponaxis=False, 
+                mode='lines+markers', 
                 line=dict(width=4, shape='spline', smoothing=1.3, color=c["hex"]), 
-                marker=dict(size=12, color=c["hex"], line=dict(width=3, color="#ffffff" if theme=="light" else "#111c44")),
+                marker=dict(size=12, color=c["hex"]), 
                 fill='tozeroy', 
-                fillcolor=c["rgba"],
-                hovertemplate=hover_template
+                fillcolor=c["rgba"], 
+                hovertemplate=ht, 
+                customdata=custom_data_formatted
             ))
 
     fig = apply_beautiful_layout(fig, theme, x_range, tickvals, ticktext)
-
-    return fig, "Аналитика по времени (Стандартный режим)", total_sum, total_patients, total_mes, active_depts, insight_html
+    
+    return fig, "Аналитика по времени (Нажмите на любую точку для детализации 🔍)", total_sum, total_patients, total_mes, active_depts, insight_html
 
 
 @app.callback(
-    [Output("main-line-chart", "figure", allow_duplicate=True), 
-     Output("main-chart-title", "children", allow_duplicate=True),
-     Output("sql-error", "children"),
-     Output("smart-insights-container", "children", allow_duplicate=True)],
-    Input("btn-execute-sql", "n_clicks"),
-    [State("sql-input", "value"), State("theme-store", "data")],
+    [
+        Output("drilldown-modal", "is_open"), 
+        Output("modal-title", "children"), 
+        Output("modal-body", "children")
+    ],
+    [
+        Input("main-line-chart", "clickData"), 
+        Input("close-modal", "n_clicks")
+    ],
+    [
+        State("drilldown-modal", "is_open"), 
+        State("f-group-by", "value"), 
+        State("f-metric", "value")
+    ]
+)
+def drilldown_modal(clickData, close_clicks, is_open, group_by_col, metric):
+    """
+    Открывает модальное окно. 
+    Блокирует открытие, если клик был сделан на результате SQL-песочницы.
+    """
+    ctx = dash.callback_context
+    if not ctx.triggered: 
+        return is_open, dash.no_update, dash.no_update
+        
+    trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    
+    if trigger_id == "close-modal": 
+        return False, "", ""
+        
+    if clickData and trigger_id == "main-line-chart":
+        point = clickData['points'][0]
+        custom_info = str(point.get('customdata', ''))
+
+        if custom_info.startswith("SQL"):
+            modal_title = "Информация"
+            modal_body = html.Div(
+                "Детализация доступна только в стандартном режиме (по фильтрам). В режиме SQL-песочницы график является прямым результатом вашего запроса.", 
+                style={
+                    "color": "var(--text-muted)", 
+                    "fontSize": "16px", 
+                    "textAlign": "center", 
+                    "padding": "20px"
+                }
+            )
+            return True, modal_title, modal_body
+            
+        clicked_date = point['x']
+        
+        if "|" in custom_info:
+            clicked_group = custom_info.split("|")[1]
+        else:
+            clicked_group = custom_info
+        
+        df = get_optimized_data()
+        date_str = clicked_date.split(' ')[0]
+
+        mask = (df['dt'].astype(str).str.startswith(date_str)) & (df[group_by_col] == clicked_group)
+        df_filtered = df[mask]
+        
+        if group_by_col != "Наименование профиля":
+            drill_col = "Наименование профиля"
+        else:
+            drill_col = "Код Услуги"
+        
+        if metric == "sum": 
+            breakdown = df_filtered.groupby(drill_col, observed=True)['Сумма'].sum().reset_index()
+            breakdown = breakdown.sort_values('Сумма', ascending=False)
+        else: 
+            breakdown = df_filtered.groupby(drill_col, observed=True).size().reset_index(name='val')
+            breakdown = breakdown.sort_values('val', ascending=False)
+        
+        top_n = breakdown.head(10)
+        modal_title = f"Детализация: {clicked_group} ({date_str})"
+        
+        if metric == 'sum':
+            x_data = top_n['Сумма']
+            text_template = '%{x:,.2f} ₽'
+        else:
+            x_data = top_n['val']
+            text_template = '%{x:,.0f}'
+            
+        fig_modal = go.Figure(go.Bar(
+            x=x_data,
+            y=top_n[drill_col],
+            orientation='h', 
+            marker_color="var(--primary)",
+            texttemplate=text_template, 
+            textposition='outside'
+        ))
+        
+        fig_modal.update_layout(
+            margin=dict(l=10, r=40, t=10, b=10), 
+            yaxis=dict(autorange="reversed"),
+            plot_bgcolor="rgba(0,0,0,0)", 
+            paper_bgcolor="rgba(0,0,0,0)",
+            xaxis=dict(showgrid=True, gridcolor="var(--grid-color)")
+        )
+        
+        modal_body = html.Div([
+            html.P(f"Топ-10 по разрезу: {drill_col}", style={"color": "var(--text-muted)", "fontWeight": "600"}),
+            dcc.Graph(figure=fig_modal, config={'displayModeBar': False}, style={"height": "350px"})
+        ])
+        
+        return True, modal_title, modal_body
+        
+    return is_open, dash.no_update, dash.no_update
+
+
+@app.callback(
+    [
+        Output("main-line-chart", "figure", allow_duplicate=True), 
+        Output("main-chart-title", "children", allow_duplicate=True), 
+        Output("sql-error", "children"), 
+        Output("smart-insights-container", "children", allow_duplicate=True)
+    ],
+    Input("btn-execute-sql", "n_clicks"), 
+    [
+        State("sql-input", "value"), 
+        State("theme-store", "data")
+    ], 
     prevent_initial_call=True
 )
 def execute_custom_sql(n_clicks, query, theme):
     """
-    Выполняет кастомный SQL-запрос и переписывает главный график.
-    Работает через in-memory базу, чтобы использовать очищенные колонки.
+    Выполнение SQL запроса с помощью DuckDB.
     """
     sql_insight = html.Div([
-        html.I(className="fas fa-terminal", style={"color": "var(--text-muted)", "marginRight": "12px", "fontSize": "20px"}),
-        html.Span("Пользовательский запрос: ", style={"fontWeight": "800", "color": "var(--text-main)"}),
-        html.Span(" Умная Сводка динамики отключена в режиме SQL-Песочницы.", style={"color": "var(--text-muted)", "marginLeft": "5px"})
+        html.I(className="fas fa-bolt", style={"color": "#FF7D00", "marginRight": "12px", "fontSize": "20px"}), 
+        html.Span("Сверхбыстрый DuckDB: ", style={"fontWeight": "800", "color": "var(--text-main)"}), 
+        html.Span("Запрос выполнен. Ознакомьтесь с графиком", style={"color": "var(--text-muted)"})
     ])
-
-    if not query or not query.strip():
+    
+    if not query or not query.strip(): 
         return dash.no_update, dash.no_update, "", dash.no_update
-
+        
     try:
         df = get_optimized_data()
+
+        safe_query = query.replace('[', '"').replace(']', '"')
+
+        duckdb.register('medical_data', df)
+        df_sql = duckdb.query(safe_query).df()
         
-        conn = sqlite3.connect(':memory:')
-        df.to_sql('medical_data', conn, index=False, if_exists='replace')
-        df_sql = pd.read_sql(query, conn)
-        conn.close()
-
-        if df_sql.empty:
-            return dash.no_update, dash.no_update, "✅ Запрос выполнен успешно, но вернул пустой результат (0 строк).", dash.no_update
-
+        if df_sql.empty: 
+            return dash.no_update, dash.no_update, "✅ Запрос выполнен успешно (0 строк).", dash.no_update
+        
         fig = go.Figure()
-        x_col = df_sql.columns[0] 
-
-        colors = [
-            {"hex": "#4318FF", "rgba": "rgba(67, 24, 255, 0.15)"}, 
-            {"hex": "#FF7D00", "rgba": "rgba(255, 125, 0, 0.15)"},
-            {"hex": "#01B574", "rgba": "rgba(1, 181, 116, 0.15)"}, 
-            {"hex": "#39B8FF", "rgba": "rgba(57, 184, 255, 0.15)"},
-            {"hex": "#E11D48", "rgba": "rgba(225, 29, 72, 0.15)"}, 
-            {"hex": "#8B5CF6", "rgba": "rgba(139, 92, 246, 0.15)"}
-        ]
-        
+        x_col = df_sql.columns[0]
+        max_y_value = 0
         color_idx = 0
         has_numeric = False
-        max_y_value = 0 
-
+        
+        colors = [
+            {"hex": "#4318FF", "rgba": "rgba(67, 24, 255, 0.15)"}, 
+            {"hex": "#FF7D00", "rgba": "rgba(255, 125, 0, 0.15)"}, 
+            {"hex": "#01B574", "rgba": "rgba(1, 181, 116, 0.15)"}
+        ]
+        
         for col in df_sql.columns[1:]:
             if pd.api.types.is_numeric_dtype(df_sql[col]):
                 has_numeric = True
@@ -1002,38 +1141,34 @@ def execute_custom_sql(n_clicks, query, theme):
                 current_max = df_sql[col].max()
                 if current_max > max_y_value:
                     max_y_value = current_max
-
+                    
                 c = colors[color_idx % len(colors)]
-
-                col_name_lower = str(col).lower()
-                is_currency = "сумм" in col_name_lower or "sum" in col_name_lower
-
-                has_decimals = pd.api.types.is_float_dtype(df_sql[col]) and not (df_sql[col].dropna() % 1 == 0).all()
                 
-                if is_currency or has_decimals:
-                    y_format = "%{y:,.2f}"
-                    if is_currency:
-                        y_format += " ₽"
+                col_name_lower = str(col).lower()
+                if "сумм" in col_name_lower or "sum" in col_name_lower:
+                    y_format = "%{y:,.2f} ₽"
                 else:
                     y_format = "%{y:,.0f}"
+
+                custom_data_sql = ["SQL|None"] * len(df_sql)
                 
                 fig.add_trace(go.Scatter(
-                    x=df_sql[x_col],
-                    y=df_sql[col],
-                    name=str(col),
-                    mode='lines+markers',
-                    cliponaxis=False, 
-                    line=dict(width=4, shape='linear', color=c["hex"]),
-                    marker=dict(size=12, color=c["hex"], line=dict(width=3, color="#ffffff" if theme=="light" else "#111c44")),
-                    fill='tozeroy',
-                    fillcolor=c["rgba"],
-                    hovertemplate=f"<b>%{{x}}</b><br><b>{str(col)}:</b> {y_format}<extra></extra>"
+                    x=df_sql[x_col], 
+                    y=df_sql[col], 
+                    name=str(col), 
+                    mode='lines+markers', 
+                    line=dict(width=4, shape='linear', color=c["hex"]), 
+                    marker=dict(size=12, color=c["hex"]), 
+                    fill='tozeroy', 
+                    fillcolor=c["rgba"], 
+                    hovertemplate=f"<b>Ось X:</b> %{{x}}<br><b>{str(col)}:</b> {y_format}<extra></extra>",
+                    customdata=custom_data_sql
                 ))
                 color_idx += 1
 
-        if not has_numeric:
-             return dash.no_update, dash.no_update, "⚠️ Для построения графика нужна хотя бы одна числовая колонка в результате.", dash.no_update
-
+        if not has_numeric: 
+            return dash.no_update, dash.no_update, "⚠️ Нужна хотя бы одна числовая колонка.", dash.no_update
+        
         def format_label(label, max_len=35):
             s = str(label)
             if len(s) > max_len:
@@ -1041,31 +1176,38 @@ def execute_custom_sql(n_clicks, query, theme):
                 if len(words) > 2:
                     mid = len(words) // 2
                     s = " ".join(words[:mid]) + "<br>" + " ".join(words[mid:])
-                if len(s) > max_len * 2:
-                    s = s[:max_len*2] + "..."
+            if len(s) > max_len * 2:
+                return s[:max_len * 2] + "..."
             return s
             
-        tickvals = df_sql[x_col].tolist()
-        ticktext = [format_label(val) for val in df_sql[x_col]]
-        
         x_range = [-0.5, len(df_sql) - 0.5]
-        y_padding = max_y_value * 0.05 if max_y_value > 0 else 10
-
+        if max_y_value > 0:
+            y_padding = max_y_value * 0.05
+        else:
+            y_padding = 10
+            
+        tickvals = df_sql[x_col].tolist()
+        ticktext = [format_label(v) for v in df_sql[x_col]]
+            
         fig = apply_beautiful_layout(fig, theme, x_range=x_range, tickvals=tickvals, ticktext=ticktext)
-        
         fig.update_yaxes(range=[-y_padding, max_y_value + y_padding])
         fig.update_layout(xaxis_tickangle=-30)
+        
+        return fig, "Аналитика (DuckDB Режим 🚀)", "", sql_insight
+        
+    except Exception as e: 
+        return dash.no_update, dash.no_update, f"❌ Ошибка DuckDB: {str(e)}", dash.no_update
 
-        return fig, "Аналитика по времени (SQL Режим 👨‍💻)", "", sql_insight
-
-    except Exception as e:
-        return dash.no_update, dash.no_update, f"❌ Ошибка в запросе: {str(e)}", dash.no_update
 
 @app.callback(
-    Output("download-xlsx", "data"),
-    Input("btn-dl", "n_clicks"),
-    [State("f-year", "value"), State("f-month", "value"), 
-     State("f-dept", "value"), State("f-mes", "value")],
+    Output("download-xlsx", "data"), 
+    Input("btn-dl", "n_clicks"), 
+    [
+        State("f-year", "value"), 
+        State("f-month", "value"), 
+        State("f-dept", "value"), 
+        State("f-mes", "value")
+    ], 
     prevent_initial_call=True
 )
 def export_excel(n_clicks, years, months, depts, mes_list):
@@ -1092,11 +1234,10 @@ def export_excel(n_clicks, years, months, depts, mes_list):
     return dcc.send_data_frame(filtered_df.to_excel, "Clinical_Report_Export.xlsx", index=False)
 
 
-def open_browser():
-    """Открывает дефолтный браузер по адресу запущенного сервера."""
+def open_browser(): 
     webbrowser.open_new("http://127.0.0.1:8050")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__": 
     Timer(1.5, open_browser).start()
     app.run(debug=False, port=8050)
