@@ -35,7 +35,7 @@ app = dash.Dash(
         "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
     ]
 )
-app.title = "Clinical AI Dashboard"
+app.title = "Clinical Dashboard"
 
 # CSS Блок
 
@@ -413,7 +413,7 @@ app.layout = html.Div([
     html.Div([
         html.Div([
             html.I(className="fas fa-heartbeat", style={"color": "var(--primary)", "fontSize": "32px", "marginRight": "12px"}),
-            html.H3("Clinical AI", style={"color": "var(--text-main)", "fontWeight": "800", "margin": 0, "letterSpacing": "-1px", "transition": "color 0.3s"})
+            html.H3("Clinical", style={"color": "var(--text-main)", "fontWeight": "800", "margin": 0, "letterSpacing": "-1px", "transition": "color 0.3s"})
         ], style={"marginBottom": "45px", "display": "flex", "alignItems": "center", "padding": "10px"}),
         
         # Блок 1: Настройки Аналитики
@@ -778,25 +778,53 @@ def update_standard_dashboard(years, months, depts, mes_list, metric, group_by_c
             else:
                 # 1. Капсулы с детализацией по каждому месяцу
                 breakdown_badges = []
+                prev_val = None
+
                 for _, row in trend_df.iterrows():
                     m_num = row['YearMonth'].month
                     m_name = MONTHS_RU.get(m_num, str(m_num))
                     y_val = row['YearMonth'].year
                     val = row['Сумма'] if metric == 'sum' else row['val']
                     
-                    badge = html.Span(f"{m_name} {y_val}: {fmt(val)}", style={
+                    # --- Вычисляем сравнение с предыдущим ---
+                    mom_element = ""
+                    if prev_val is not None:
+                        diff_mom = val - prev_val
+                        perc_mom = (diff_mom / prev_val * 100) if prev_val != 0 else 0
+                        
+                        if diff_mom > 0:
+                            m_color, m_icon, m_sign = "#01B574", "↑", "+"
+                        elif diff_mom < 0:
+                            m_color, m_icon, m_sign = "#E11D48", "↓", ""
+                        else:
+                            m_color, m_icon, m_sign = "var(--text-muted)", "=", ""
+                            
+                        # Форматируем микро-дельту (Убираем копейки)
+                        diff_str = f"{abs(diff_mom):,.0f}".replace(',', ' ')
+                        mom_element = html.Span([
+                            html.Span(f" {m_icon} ", style={"margin": "0 4px"}),
+                            f"{m_sign}{diff_str} ({m_sign}{perc_mom:.1f}%)"
+                        ], style={"color": m_color, "fontSize": "12px", "fontWeight": "700"})
+                    
+                    # Создаем капсулу, объединяя основное значение и дельту
+                    badge = html.Div([
+                        html.Span(f"{m_name} {y_val}: ", style={"color": "var(--text-muted)", "marginRight": "4px"}),
+                        html.Span(f"{fmt(val)}", style={"color": "var(--text-main)"}),
+                        mom_element
+                    ], style={
                         "backgroundColor": "var(--card-bg)",
                         "border": "1px solid var(--grid-color)",
                         "borderRadius": "8px",
-                        "padding": "4px 10px",
+                        "padding": "6px 12px",
                         "margin": "4px",
                         "fontSize": "13px",
                         "fontWeight": "600",
-                        "color": "var(--text-main)",
-                        "display": "inline-block",
+                        "display": "inline-flex",
+                        "alignItems": "center",
                         "boxShadow": "0px 2px 4px rgba(0,0,0,0.02)"
                     })
                     breakdown_badges.append(badge)
+                    prev_val = val
 
                 # 2. Основной текст о разнице
                 if len(trend_df) >= 2:
