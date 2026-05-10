@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 import dash_bootstrap_components as dbc
 from dash import html, dcc, Input, Output, State
 import duckdb
+import dash_ag_grid as dag
 
 
 # --- КОНФИГУРАЦИЯ И КОНСТАНТЫ ---
@@ -15,13 +16,51 @@ import duckdb
 DB_NAME = "database.db"
 
 MONTHS_RU = {
-    1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель",
-    5: "Май", 6: "Июнь", 7: "Июль", 8: "Август",
-    9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
+    1: "Январь", 
+    2: "Февраль", 
+    3: "Март", 
+    4: "Апрель",
+    5: "Май", 
+    6: "Июнь", 
+    7: "Июль", 
+    8: "Август",
+    9: "Сентябрь", 
+    10: "Октябрь", 
+    11: "Ноябрь", 
+    12: "Декабрь"
 }
 
 QUARTERS_RU = {
-    1: "1 Квартал", 2: "2 Квартал", 3: "3 Квартал", 4: "4 Квартал"
+    1: "1 Квартал", 
+    2: "2 Квартал", 
+    3: "3 Квартал", 
+    4: "4 Квартал"
+}
+
+AG_GRID_LOCALE_RU = {
+    "selectAll": "(Выбрать все)",
+    "searchOoo": "Поиск...",
+    "blanks": "(Пустые)",
+    "noMatches": "Нет совпадений",
+    "filterOoo": "Фильтр...",
+    "equals": "Равно",
+    "notEqual": "Не равно",
+    "blank": "Пусто",
+    "notBlank": "Не пусто",
+    "empty": "Выберите тип фильтра",
+    "lessThan": "Меньше чем",
+    "greaterThan": "Больше чем",
+    "lessThanOrEqual": "Меньше или равно",
+    "greaterThanOrEqual": "Больше или равно",
+    "inRange": "В промежутке",
+    "inRangeStart": "от",
+    "inRangeEnd": "до",
+    "contains": "Содержит",
+    "notContains": "Не содержит",
+    "startsWith": "Начинается с",
+    "endsWith": "Заканчивается на",
+    "andCondition": "И",
+    "orCondition": "ИЛИ"
 }
 
 # Кэш для минимизации обращений к диску
@@ -47,7 +86,7 @@ app = dash.Dash(
 app.title = "Clinical Dashboard"
 
 
-# --- CSS СТИЛИ ---
+# --- CSS СТИЛИ И КЛИЕНТСКИЙ JAVASCRIPT ---
 
 app.index_string = '''
 <!DOCTYPE html>
@@ -105,14 +144,16 @@ app.index_string = '''
             .has-value.Select--multi .Select-value-icon { border-right: 1px solid var(--grid-color) !important; color: var(--primary) !important; border-radius: 12px 0 0 12px !important; transition: background 0.2s; }
             .has-value.Select--multi .Select-value-icon:hover { background-color: var(--primary) !important; color: white !important; }
             
-            /* Скроллбар и SQL песочница */
+            /* Скроллбар */
             ::-webkit-scrollbar { width: 8px; height: 8px; }
             ::-webkit-scrollbar-track { background: transparent; }
             ::-webkit-scrollbar-thumb { background: var(--grid-color); border-radius: 10px; }
             ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+            
             .Select-clear-zone { color: var(--text-muted) !important; }
             .Select-arrow { border-color: var(--text-muted) transparent transparent !important; }
             
+            /* SQL Песочница */
             .sql-editor { 
                 font-family: 'Courier New', Courier, monospace !important; 
                 background-color: #1e1e1e !important; 
@@ -131,6 +172,7 @@ app.index_string = '''
                 outline: none !important; 
                 box-shadow: 0 0 0 4px var(--primary-light) !important; 
             }
+            
             .schema-badge { 
                 background-color: var(--bg-color); 
                 color: var(--text-main); 
@@ -149,6 +191,28 @@ app.index_string = '''
                 border-color: var(--primary); 
                 cursor: default; 
             }
+
+            .nav-tabs { 
+                border-bottom: 2px solid var(--grid-color); 
+                margin-bottom: 25px; 
+            }
+            .nav-tabs .nav-link { 
+                color: var(--text-muted); 
+                font-weight: 600; 
+                border: none; 
+                padding: 12px 25px; 
+                border-radius: 12px 12px 0 0;
+                transition: all 0.3s ease;
+            }
+            .nav-tabs .nav-link:hover { 
+                color: var(--primary); 
+                background-color: var(--primary-light); 
+            }
+            .nav-tabs .nav-link.active { 
+                color: var(--primary); 
+                background-color: transparent; 
+                border-bottom: 3px solid var(--primary); 
+            }
             
             /* Стили для PDF экспорта */
             @media print {
@@ -165,26 +229,22 @@ app.index_string = '''
             {%scripts%}
             {%renderer%}
             
-            <!-- СКРИПТ ДЛЯ ПОВЕДЕНИЯ РЕДАКТОРА КОДА -->
             <script>
                 document.addEventListener('keydown', function(e) {
                     if (e.target && e.target.classList.contains('sql-editor')) {
-                        
                         var start = e.target.selectionStart;
                         var end = e.target.selectionEnd;
                         var value = e.target.value;
                         var selectedText = value.substring(start, end);
 
-                        // --- 1. ОБРАБОТКА НАЖАТИЯ TAB ---
+                        // --- ОБРАБОТКА НАЖАТИЯ TAB ---
                         if (e.key === 'Tab') {
-                            e.preventDefault(); // Запрещаем переключать фокус
-                            var spaces = "    "; // 4 пробела
-                            
-                            // Используем execCommand, чтобы браузер запомнил это действие для Ctrl+Z
+                            e.preventDefault(); 
+                            var spaces = "    "; 
                             document.execCommand('insertText', false, spaces);
                         }
                         
-                        // --- 2. АВТОМАТИЧЕСКОЕ ЗАКРЫТИЕ СКОБОК И КАВЫЧЕК ---
+                        // --- АВТОМАТИЧЕСКОЕ ЗАКРЫТИЕ СКОБОК И КАВЫЧЕК ---
                         const bracketsMap = {
                             '[': ']',
                             '(': ')',
@@ -197,11 +257,8 @@ app.index_string = '''
                             e.preventDefault(); 
                             
                             var insertText = e.key + selectedText + bracketsMap[e.key];
-                            
-                            // Вставляем текст, сохраняя поддержку нативного Ctrl+Z
                             document.execCommand('insertText', false, insertText);
                             
-                            // Возвращаем курсор в правильное место
                             if (selectedText.length > 0) {
                                 e.target.selectionStart = start + 1;
                                 e.target.selectionEnd = end + 1;
@@ -221,10 +278,7 @@ app.index_string = '''
 # --- ФУНКЦИИ ОБРАБОТКИ ДАННЫХ И ВИЗУАЛА ---
 
 def get_optimized_data() -> pd.DataFrame:
-    """
-    Загружает данные из SQLite, очищает их, преобразует типы 
-    и кэширует в оперативной памяти для моментальной работы дашборда.
-    """
+    """Загрузка, очистка и кэширование данных."""
     if not os.path.exists(DB_NAME):
         return pd.DataFrame()
     
@@ -248,13 +302,16 @@ def get_optimized_data() -> pd.DataFrame:
         .str.strip()
     )
 
-    # Обработка дат
+    # Обработка дат и генерация новых колонок
     if 'Период' in df.columns:
         df['dt'] = pd.to_datetime(df['Период'], errors='coerce')
         df = df.dropna(subset=['dt'])
+        
         df['Year'] = df['dt'].dt.year.astype(int)
+        
         df['Month_Num'] = df['dt'].dt.month.astype(int)
         df['Month_Name'] = df['Month_Num'].map(MONTHS_RU)
+        
         df['Quarter_Num'] = df['dt'].dt.quarter.astype(int)
         df['Quarter_Name'] = df['Quarter_Num'].map(QUARTERS_RU)
 
@@ -272,10 +329,7 @@ def get_optimized_data() -> pd.DataFrame:
 
 
 def apply_beautiful_layout(fig: go.Figure, theme: str, x_range=None, tickvals=None, ticktext=None) -> go.Figure:
-    """
-    Единая функция для применения красивого дизайна ко всем графикам.
-    Установлен hovermode='closest' для корректного клика по точкам.
-    """
+    """Единая функция дизайна графиков."""
     if theme == "dark": 
         text_color = "#ffffff"
         grid_color = "#1b254b"
@@ -290,7 +344,7 @@ def apply_beautiful_layout(fig: go.Figure, theme: str, x_range=None, tickvals=No
         color=text_color, 
         showline=True, 
         linecolor=grid_color, 
-        linewidth=2,
+        linewidth=2, 
         automargin=True
     )
 
@@ -304,7 +358,7 @@ def apply_beautiful_layout(fig: go.Figure, theme: str, x_range=None, tickvals=No
         
     fig.update_layout(
         font_family="Inter", 
-        separators=", ",
+        separators=", ", 
         plot_bgcolor="rgba(0,0,0,0)", 
         paper_bgcolor="rgba(0,0,0,0)", 
         margin=dict(l=10, r=10, t=30, b=10),
@@ -321,7 +375,7 @@ def apply_beautiful_layout(fig: go.Figure, theme: str, x_range=None, tickvals=No
             showgrid=True, 
             gridcolor=grid_color, 
             zeroline=False, 
-            color=text_color,
+            color=text_color, 
             automargin=True
         ),
         hoverlabel=dict(
@@ -350,7 +404,7 @@ def create_kpi_card(title: str, id_value: str, icon_class: str, color_hex: str, 
                                 "color": "var(--text-muted)", 
                                 "fontWeight": "600", 
                                 "fontSize": "13px", 
-                                "marginBottom": "6px", 
+                                "marginBottom": "6px",
                                 "letterSpacing": "0.5px", 
                                 "textTransform": "uppercase"
                             }
@@ -399,6 +453,9 @@ def create_kpi_card(title: str, id_value: str, icon_class: str, color_hex: str, 
 
 app.layout = html.Div([
     dcc.Store(id="theme-store", data="light"),
+
+    dcc.Store(id="presets-store", storage_type="local", data={}),
+
     html.Div(
         className="no-print",
         style={
@@ -433,7 +490,7 @@ app.layout = html.Div([
                     clearable=False,
                 ),
                 
-                html.Label("2. Разрез линий (Группировка)", style={"color": "var(--text-main)", "fontWeight": "700", "fontSize": "13px", "marginBottom": "8px", "marginTop": "20px", "textTransform": "uppercase"}),
+                html.Label("2. Разрез линий", style={"color": "var(--text-main)", "fontWeight": "700", "fontSize": "13px", "marginBottom": "8px", "marginTop": "20px", "textTransform": "uppercase"}),
                 dcc.Dropdown(
                     id="f-group-by",
                     options=[
@@ -453,7 +510,7 @@ app.layout = html.Div([
                 html.Label("Период (Год)", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}),
                 dcc.Dropdown(id="f-year", multi=True, placeholder="Все года..."),
             ], className="mb-4"),
-
+            
             html.Div([
                 html.Label("Квартал", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}),
                 dcc.Dropdown(id="f-quarter", multi=True, placeholder="Все кварталы..."),
@@ -467,6 +524,12 @@ app.layout = html.Div([
             html.Div([
                 html.Label("Отделение", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}),
                 dcc.Dropdown(id="f-dept", multi=True, placeholder="Все отделения..."),
+            ], className="mb-4"),
+            
+            # --- НОВОЕ: Фильтр по профилю ---
+            html.Div([
+                html.Label("Профиль", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}),
+                dcc.Dropdown(id="f-profile", multi=True, placeholder="Все профили..."),
             ], className="mb-4"),
             
             html.Div([
@@ -492,7 +555,7 @@ app.layout = html.Div([
         ]
     ),
 
-    # ПРАВАЯ ЧАСТЬ
+    # ПРАВАЯ ЧАСТЬ: КОНТЕНТ ДАШБОРДА
     html.Div(
         style={"marginLeft": "340px", "padding": "40px 50px", "minHeight": "100vh"},
         children=[
@@ -507,7 +570,7 @@ app.layout = html.Div([
                             html.I(className="fas fa-file-pdf"), 
                             id="btn-pdf", 
                             title="Скачать PDF график", 
-                            className="no-print",
+                            className="no-print", 
                             style={
                                 "background": "transparent", 
                                 "border": "none", 
@@ -520,7 +583,7 @@ app.layout = html.Div([
                         html.Button(
                             html.I(id="theme-icon", className="fas fa-moon"), 
                             id="theme-toggle", 
-                            className="no-print",
+                            className="no-print", 
                             style={
                                 "background": "transparent", 
                                 "border": "none", 
@@ -537,171 +600,305 @@ app.layout = html.Div([
                     ], style={"textAlign": "right", "display": "flex", "alignItems": "center", "justifyContent": "flex-end"}), 
                     width=6
                 )
-            ], style={"marginBottom": "40px", "marginTop": "10px"}),
+            ], style={"marginBottom": "30px", "marginTop": "10px"}),
 
-            # KPI Карточки
-            dbc.Row(
-                className="no-print",
+            # --- СИСТЕМА ВКЛАДОК ---
+            dbc.Tabs(
+                id="main-tabs",
+                active_tab="tab-main",
                 children=[
-                    dbc.Col(create_kpi_card("ОБЩАЯ СУММА", "kpi-sum", "fas fa-wallet", "#4318FF", "rgba(67, 24, 255, 0.1)"), xl=3, lg=6, md=6, sm=12, className="mb-4"),
-                    dbc.Col(create_kpi_card("УНИКАЛЬНЫХ ПАЦИЕНТОВ", "kpi-patients", "fas fa-user-injured", "#FF7D00", "rgba(255, 125, 0, 0.1)"), xl=3, lg=6, md=6, sm=12, className="mb-4"),
-                    dbc.Col(create_kpi_card("ОКАЗАНО УСЛУГ (МЭС)", "kpi-mes", "fas fa-file-medical-alt", "#01B574", "rgba(1, 181, 116, 0.1)"), xl=3, lg=6, md=6, sm=12, className="mb-4"),
-                    dbc.Col(create_kpi_card("АКТИВНЫХ ОТДЕЛЕНИЙ", "kpi-depts", "fas fa-hospital", "#39B8FF", "rgba(57, 184, 255, 0.1)"), xl=3, lg=6, md=6, sm=12, className="mb-4"),
-                ]
-            ),
 
-            # ОТДЕЛЬНЫЙ КОНТЕЙНЕР ДЛЯ PDF
-            html.Div(
-                id="pdf-export-container", 
-                children=[
-                    dbc.Row([
-                        dbc.Col(
-                            html.Div([
-                                html.H4("Аналитика по времени", id="main-chart-title", style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px", "letterSpacing": "-0.5px"}),
-                                
-                                dcc.Loading(
-                                    type="dot", 
-                                    color="var(--primary)",
-                                    children=[
-                                        html.Div(
-                                            id="smart-insights-container", 
-                                            style={
-                                                "marginBottom": "20px", 
-                                                "padding": "16px 20px", 
-                                                "backgroundColor": "var(--primary-light)", 
-                                                "borderRadius": "14px", 
-                                                "border": "1px solid var(--grid-color)", 
-                                                "fontSize": "15px", 
-                                                "display": "flex", 
-                                                "flexDirection": "column", 
-                                                "alignItems": "flex-start"
-                                            }
-                                        ),
-                                        dcc.Graph(
-                                            id="main-line-chart", 
-                                            config={'displayModeBar': False}, 
-                                            style={"height": "480px"}
+                    dbc.Tab(
+                        label="📈 Стандартный отчет", 
+                        tab_id="tab-main",
+                        children=[
+                            html.Div(
+                                style={"marginTop": "25px"}, 
+                                children=[
+                                    dbc.Row(
+                                        className="no-print",
+                                        children=[
+                                            dbc.Col(create_kpi_card("ОБЩАЯ СУММА", "kpi-sum", "fas fa-wallet", "#4318FF", "rgba(67, 24, 255, 0.1)"), xl=3, lg=6, md=6, sm=12, className="mb-4"),
+                                            dbc.Col(create_kpi_card("УНИКАЛЬНЫХ ПАЦИЕНТОВ", "kpi-patients", "fas fa-user-injured", "#FF7D00", "rgba(255, 125, 0, 0.1)"), xl=3, lg=6, md=6, sm=12, className="mb-4"),
+                                            dbc.Col(create_kpi_card("ОКАЗАНО УСЛУГ (МЭС)", "kpi-mes", "fas fa-file-medical-alt", "#01B574", "rgba(1, 181, 116, 0.1)"), xl=3, lg=6, md=6, sm=12, className="mb-4"),
+                                            dbc.Col(create_kpi_card("АКТИВНЫХ ОТДЕЛЕНИЙ", "kpi-depts", "fas fa-hospital", "#39B8FF", "rgba(57, 184, 255, 0.1)"), xl=3, lg=6, md=6, sm=12, className="mb-4"),
+                                        ]
+                                    ),
+                                    
+                                    # Контейнер для экспорта в PDF
+                                    html.Div(
+                                        id="pdf-export-container", 
+                                        children=[
+                                            dbc.Row([
+                                                dbc.Col(
+                                                    html.Div([
+                                                        html.H4("Аналитика по времени", id="main-chart-title", style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px"}),
+                                                        dcc.Loading(
+                                                            type="dot", 
+                                                            color="var(--primary)",
+                                                            children=[
+                                                                html.Div(
+                                                                    id="smart-insights-container", 
+                                                                    style={
+                                                                        "marginBottom": "20px", 
+                                                                        "padding": "16px 20px", 
+                                                                        "backgroundColor": "var(--primary-light)", 
+                                                                        "borderRadius": "14px", 
+                                                                        "border": "1px solid var(--grid-color)", 
+                                                                        "fontSize": "15px", 
+                                                                        "display": "flex", 
+                                                                        "flexDirection": "column", 
+                                                                        "alignItems": "flex-start"
+                                                                    }
+                                                                ),
+                                                                dcc.Graph(
+                                                                    id="main-line-chart", 
+                                                                    config={'displayModeBar': False}, 
+                                                                    style={"height": "480px"}
+                                                                )
+                                                            ]
+                                                        )
+                                                    ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)"}), 
+                                                    width=12
+                                                )
+                                            ])
+                                        ]
+                                    ),
+                                    
+                                    # Блок SQL-Песочницы
+                                    dbc.Row(
+                                        className="mt-4 no-print", 
+                                        children=[
+                                            dbc.Col(
+                                                html.Div([
+                                                    html.H4(
+                                                        [html.I(className="fas fa-terminal", style={"marginRight": "12px", "color": "var(--primary)"}), "SQL-Песочница"], 
+                                                        style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px"}
+                                                    ),
+                                                    html.P(
+                                                        "Напишите ваш SQL-запрос.", 
+                                                        style={"color": "var(--text-muted)", "fontSize": "14px", "marginBottom": "20px"}
+                                                    ),
+                                                    html.Div(
+                                                        style={"position": "relative", "width": "100%"},
+                                                        children=[
+                                                            dcc.Textarea(
+                                                                id="sql-input", 
+                                                                className="sql-editor", 
+                                                                style={"resize": "none", "paddingRight": "50px"}, 
+                                                                placeholder="Введите ваш SQL запрос...", 
+                                                                value="SELECT \n  [Наименование отделения], \n  COUNT(*) as [Количество услуг] \nFROM medical_data \nGROUP BY [Наименование отделения] \nORDER BY [Количество услуг] DESC \nLIMIT 7;"
+                                                            ),
+                                                            html.Button(
+                                                                html.I(className="fas fa-expand"), 
+                                                                id="btn-expand-sql", 
+                                                                title="Полноэкранный редактор", 
+                                                                style={
+                                                                    "position": "absolute", 
+                                                                    "top": "12px", 
+                                                                    "right": "12px", 
+                                                                    "background": "rgba(255, 255, 255, 0.05)", 
+                                                                    "border": "none", 
+                                                                    "borderRadius": "8px", 
+                                                                    "padding": "8px", 
+                                                                    "color": "#a3aed1", 
+                                                                    "fontSize": "18px", 
+                                                                    "cursor": "pointer",
+                                                                    "transition": "all 0.3s"
+                                                                }
+                                                            )
+                                                        ]
+                                                    ),
+                                                    dbc.Button(
+                                                        [html.I(className="fas fa-play", style={"marginRight": "10px"}), "Выполнить SQL"], 
+                                                        id="btn-execute-sql", 
+                                                        style={
+                                                            "backgroundColor": "var(--primary)", 
+                                                            "border": "none", 
+                                                            "borderRadius": "12px", 
+                                                            "padding": "12px 24px", 
+                                                            "fontWeight": "600", 
+                                                            "marginTop": "15px"
+                                                        }
+                                                    ),
+                                                    html.Div(
+                                                        id="sql-error", 
+                                                        style={"color": "#E11D48", "marginTop": "15px", "fontWeight": "600", "fontSize": "14px"}
+                                                    ),
+                                                ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)", "height": "100%"}), 
+                                                xl=8, lg=12, className="mb-4"
+                                            ),
+                                            
+                                            dbc.Col(
+                                                html.Div([
+                                                    html.H5(
+                                                        [html.I(className="fas fa-database", style={"marginRight": "10px", "color": "#01B574"}), "Схема Данных"], 
+                                                        style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "25px"}
+                                                    ),
+                                                    html.Div([
+                                                        html.Span("Таблица:", style={"color": "var(--text-muted)", "fontSize": "13px", "fontWeight": "600", "textTransform": "uppercase", "marginRight": "10px"}),
+                                                        html.Span("medical_data", style={"color": "var(--primary)", "fontWeight": "700", "fontSize": "16px", "backgroundColor": "var(--primary-light)", "padding": "4px 10px", "borderRadius": "8px"})
+                                                    ], style={"marginBottom": "25px"}),
+                                                    
+                                                    html.P(
+                                                        "Доступные колонки:", 
+                                                        style={"color": "var(--text-muted)", "fontSize": "13px", "fontWeight": "600", "textTransform": "uppercase", "marginBottom": "15px"}
+                                                    ),
+                                                    html.Div([
+                                                        html.Span("Период", className="schema-badge"), 
+                                                        html.Span("Наименование отделения", className="schema-badge"), 
+                                                        html.Span("Код Услуги", className="schema-badge"), 
+                                                        html.Span("Наименование профиля", className="schema-badge"), 
+                                                        html.Span("ИД пациента в версии счета", className="schema-badge"), 
+                                                        html.Span("Сумма", className="schema-badge")
+                                                    ]),
+                                                    html.Div([
+                                                        html.I(className="fas fa-lightbulb", style={"marginRight": "8px", "color": "#FF7D00"}),
+                                                        html.Span("Если в названии колонки есть пробелы, оборачивайте её в квадратные скобки: ", style={"color": "var(--text-muted)"}),
+                                                        html.Code("[Наименование отделения]", style={"color": "var(--text-main)", "fontWeight": "600"})
+                                                    ], style={"marginTop": "30px", "fontSize": "13px", "backgroundColor": "var(--bg-color)", "padding": "15px", "borderRadius": "12px", "border": "1px solid var(--grid-color)"})
+                                                ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)", "height": "100%"}), 
+                                                xl=4, lg=12, className="mb-4"
+                                            )
+                                        ]
+                                    )
+                                ]
+                            )
+                        ]
+                    ),
+
+                    dbc.Tab(
+                        label="🧪 Улучшенная аналитика", 
+                        tab_id="tab-beta",
+                        children=[
+                            html.Div(
+                                style={"marginTop": "25px"}, 
+                                children=[
+
+                                    dbc.Row([
+                                        dbc.Col(
+                                            html.Div([
+                                                html.H4(
+                                                    [html.I(className="fas fa-bookmark", style={"color": "#FF7D00", "marginRight": "12px"}), "Менеджер сценариев"], 
+                                                    style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "20px"}
+                                                ),
+                                                html.P(
+                                                    "Сохраняйте наборы фильтров (Год, Квартал, Месяц, Отделение, Профиль), чтобы возвращаться к ним в один клик.", 
+                                                    style={"color": "var(--text-muted)"}
+                                                ),
+                                                dbc.Row([
+                                                    dbc.Col([
+                                                        html.Label("Загрузить сохраненный пресет:", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "13px"}),
+                                                        dcc.Dropdown(
+                                                            id="dropdown-load-preset", 
+                                                            placeholder="Выберите сценарий...", 
+                                                            clearable=True
+                                                        )
+                                                    ], width=6),
+                                                    dbc.Col([
+                                                        html.Label("Сохранить текущие фильтры как:", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "13px"}),
+                                                        html.Div(
+                                                            style={"display": "flex", "gap": "10px"}, 
+                                                            children=[
+                                                                dbc.Input(
+                                                                    id="input-preset-name", 
+                                                                    placeholder="Название пресета (например: Отчет Гл.Врача)", 
+                                                                    style={"borderRadius": "12px"}
+                                                                ),
+                                                                dbc.Button(
+                                                                    "Сохранить", 
+                                                                    id="btn-save-preset", 
+                                                                    style={"backgroundColor": "var(--primary)", "border": "none", "borderRadius": "12px", "fontWeight": "600"}
+                                                                )
+                                                            ]
+                                                        )
+                                                    ], width=6)
+                                                ]),
+                                                html.Div(
+                                                    id="preset-msg", 
+                                                    style={"marginTop": "10px", "fontSize": "14px", "fontWeight": "600", "color": "#01B574"}
+                                                )
+                                            ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "30px", "boxShadow": "var(--shadow)", "marginBottom": "25px"}),
+                                            width=12
                                         )
-                                    ]
-                                )
-                            ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)"}), 
-                            width=12
-                        )
-                    ])
+                                    ]),
+                                    
+                                    # Блок: Тепловая карта
+                                    dbc.Row([
+                                        dbc.Col(
+                                            html.Div([
+                                                html.H4(
+                                                    [html.I(className="fas fa-fire", style={"color": "#E11D48", "marginRight": "12px"}), "Тепловая карта"], 
+                                                    style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px"}
+                                                ),
+                                                html.P(
+                                                    "Позволяет мгновенно увидеть аномалии и концентрацию показателей на пересечении Отделений и Времени.", 
+                                                    style={"color": "var(--text-muted)", "marginBottom": "20px"}
+                                                ),
+                                                dcc.Loading(
+                                                    type="dot", 
+                                                    color="#E11D48",
+                                                    children=dcc.Graph(
+                                                        id="heatmap-chart", 
+                                                        config={'displayModeBar': False}
+                                                    )
+                                                )
+                                            ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)", "marginBottom": "25px"}),
+                                            width=12
+                                        )
+                                    ]),
+                                    
+                                    # Блок: AG Grid Интерактивная таблица
+                                    dbc.Row([
+                                        dbc.Col(
+                                            html.Div([
+                                                html.Div([
+                                                    html.H4(
+                                                        [html.I(className="fas fa-table", style={"color": "#01B574", "marginRight": "12px"}), "Сводная таблица"], 
+                                                        style={"fontWeight": "800", "color": "var(--text-main)", "margin": "0"}
+                                                    ),
+                                                    html.Button(
+                                                        html.I(className="fas fa-file-csv"), 
+                                                        id="btn-export-grid", 
+                                                        title="Скачать таблицу (CSV/Excel)", 
+                                                        className="no-print", 
+                                                        style={
+                                                            "background": "transparent", 
+                                                            "border": "none", 
+                                                            "fontSize": "22px", 
+                                                            "color": "#01B574", 
+                                                            "cursor": "pointer"
+                                                        }
+                                                    )
+                                                ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "15px"}),
+                                                
+                                                html.P(
+                                                    "Сырые агрегированные данные. Используйте выпадающие списки под заголовками колонок для быстрой фильтрации.", 
+                                                    style={"color": "var(--text-muted)", "marginBottom": "20px"}
+                                                ),
+                                                
+                                                dcc.Loading(
+                                                    type="dot", 
+                                                    color="#01B574",
+                                                    children=html.Div(
+                                                        id="ag-grid-container", 
+                                                        style={"width": "100%"}
+                                                    )
+                                                )
+                                            ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)"}),
+                                            width=12
+                                        )
+                                    ])
+                                ]
+                            )
+                        ]
+                    )
                 ]
-            ), 
+            )
+        ]
+    ),
 
-            # БЛОК: SQL Песочница
-            dbc.Row(
-            className="mt-4 no-print", 
-            children=[
-                dbc.Col(
-                    html.Div([
-                        html.H4(
-                            [html.I(className="fas fa-terminal", style={"marginRight": "12px", "color": "var(--primary)"}), "SQL-Песочница"], 
-                            style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px"}
-                        ),
-                        html.P(
-                            "Напишите ваш SQL-запрос.", 
-                            style={"color": "var(--text-muted)", "fontSize": "14px", "marginBottom": "20px"}
-                        ),
-
-                        html.Div(
-                            style={"position": "relative", "width": "100%"},
-                            children=[
-                                dcc.Textarea(
-                                    id="sql-input", 
-                                    className="sql-editor", 
-                                    style={
-                                        "resize": "none",
-                                        "paddingRight": "50px"
-                                    },
-                                    placeholder="Введите ваш SQL запрос...", 
-                                    value="SELECT \n  [Наименование отделения], \n  COUNT(*) as [Количество услуг] \nFROM medical_data \nGROUP BY [Наименование отделения] \nORDER BY [Количество услуг] DESC \nLIMIT 7;"
-                                ),
-                                html.Button(
-                                    html.I(className="fas fa-expand"), 
-                                    id="btn-expand-sql", 
-                                    title="Полноэкранный редактор",
-                                    style={
-                                        "position": "absolute", 
-                                        "top": "12px", 
-                                        "right": "12px", 
-                                        "background": "rgba(255, 255, 255, 0.05)", 
-                                        "border": "none", 
-                                        "borderRadius": "8px",
-                                        "padding": "8px",
-                                        "color": "#a3aed1", 
-                                        "fontSize": "18px", 
-                                        "cursor": "pointer",
-                                        "transition": "all 0.3s"
-                                    }
-                                )
-                            ]
-                        ),
-                        
-                        dbc.Button(
-                            [html.I(className="fas fa-play", style={"marginRight": "10px"}), "Выполнить SQL"], 
-                            id="btn-execute-sql", 
-                            style={
-                                "backgroundColor": "var(--primary)", 
-                                "border": "none", 
-                                "borderRadius": "12px", 
-                                "padding": "12px 24px", 
-                                "fontWeight": "600", 
-                                "marginTop": "15px"
-                            }
-                        ),
-                        
-                        html.Div(
-                            id="sql-error", 
-                            style={"color": "#E11D48", "marginTop": "15px", "fontWeight": "600", "fontSize": "14px"}
-                        ),
-                        
-                    ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)", "height": "100%"}), 
-                    xl=8, lg=12, className="mb-4"
-                ),
-                
-                # Шпаргалка по базе данных
-                dbc.Col(
-                    html.Div([
-                        html.H5(
-                            [html.I(className="fas fa-database", style={"marginRight": "10px", "color": "#01B574"}), "Схема Данных"], 
-                            style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "25px"}
-                        ),
-                        
-                        html.Div([
-                            html.Span("Таблица:", style={"color": "var(--text-muted)", "fontSize": "13px", "fontWeight": "600", "textTransform": "uppercase", "marginRight": "10px"}),
-                            html.Span("medical_data", style={"color": "var(--primary)", "fontWeight": "700", "fontSize": "16px", "backgroundColor": "var(--primary-light)", "padding": "4px 10px", "borderRadius": "8px"})
-                        ], style={"marginBottom": "25px"}),
-                        
-                        html.P(
-                            "Доступные колонки:", 
-                            style={"color": "var(--text-muted)", "fontSize": "13px", "fontWeight": "600", "textTransform": "uppercase", "marginBottom": "15px"}
-                        ),
-                        
-                        html.Div([
-                            html.Span("Период", className="schema-badge"), 
-                            html.Span("Наименование отделения", className="schema-badge"), 
-                            html.Span("Код Услуги", className="schema-badge"), 
-                            html.Span("Наименование профиля", className="schema-badge"), 
-                            html.Span("ИД пациента в версии счета", className="schema-badge"), 
-                            html.Span("Сумма", className="schema-badge")
-                        ]),
-                        
-                        html.Div([
-                            html.I(className="fas fa-info-circle", style={"marginRight": "8px", "color": "var(--text-muted)"}),
-                            html.Span("Если в названии колонки есть пробелы, оборачивайте её в квадратные скобки: ", style={"color": "var(--text-muted)"}),
-                            html.Code("[Наименование отделения]", style={"color": "var(--text-main)", "fontWeight": "600"})
-                        ], style={"marginTop": "30px", "fontSize": "13px", "backgroundColor": "var(--bg-color)", "padding": "15px", "borderRadius": "12px", "border": "1px solid var(--grid-color)"})
-                        
-                    ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)", "height": "100%"}), 
-                    xl=4, lg=12, className="mb-4"
-                )
-            ]
-        )
-    ]),
-
+    # --- МОДАЛЬНОЕ ОКНО 1 ---
     dbc.Modal(
         [
             dbc.ModalHeader(
@@ -720,7 +917,7 @@ app.layout = html.Div([
         centered=True
     ),
 
-    # --- НОВОЕ МОДАЛЬНОЕ ОКНО: SQL РЕДАКТОР ---
+    # --- МОДАЛЬНОЕ ОКНО 2: SQL РЕДАКТОР ---
     dbc.Modal(
         [
             dbc.ModalHeader(
@@ -731,28 +928,20 @@ app.layout = html.Div([
             ),
             dbc.ModalBody(
                 dbc.Row([
-                    # Левая колонка: Редактор Кода
                     dbc.Col(
                         html.Div([
                             dcc.Textarea(
-                                id="sql-modal-input",
-                                className="sql-editor",
-                                style={
-                                    "height": "480px",
-                                    "resize": "none", 
-                                    "fontSize": "16px", 
-                                    "lineHeight": "1.6",
-                                    "padding": "20px"
-                                }
+                                id="sql-modal-input", 
+                                className="sql-editor", 
+                                style={"height": "480px", "resize": "none", "fontSize": "16px", "padding": "20px"}
                             ),
                             html.Div(
                                 id="sql-modal-linter", 
                                 style={"marginTop": "8px", "fontSize": "13px", "fontWeight": "600", "minHeight": "20px"}
                             )
-                        ]),
+                        ]), 
                         width=8
                     ),
-                    # Правая колонка
                     dbc.Col(
                         html.Div([
                             html.H5(
@@ -771,34 +960,26 @@ app.layout = html.Div([
                                 html.Span("ИД пациента в версии счета", className="schema-badge", style={"width": "100%", "textAlign": "left"}), 
                                 html.Span("Сумма", className="schema-badge", style={"width": "100%", "textAlign": "left"})
                             ]),
+
                             html.Div([
                                 html.I(className="fas fa-lightbulb", style={"marginRight": "8px", "color": "#FF7D00"}),
-                                html.Span("Не забудьте использовать [квадратные скобки] для полей с пробелами.", style={"color": "var(--text-muted)", "fontSize": "13px"})
-                            ], style={"marginTop": "25px", "backgroundColor": "var(--bg-color)", "padding": "15px", "borderRadius": "12px", "border": "1px solid var(--grid-color)"})
-                        ], style={"backgroundColor": "var(--bg-color)", "borderRadius": "16px", "padding": "25px", "height": "100%", "border": "1px solid var(--grid-color)"}),
+                                html.Span("Если в названии колонки есть пробелы, оборачивайте её в квадратные скобки: ", style={"color": "var(--text-muted)"}),
+                                html.Code("[Наименование отделения]", style={"color": "var(--text-main)", "fontWeight": "600"})
+                                ], style={"marginTop": "30px", "fontSize": "13px", "backgroundColor": "var(--bg-color)", "padding": "15px", "borderRadius": "12px", "border": "1px solid var(--grid-color)"})
+                        ], style={"backgroundColor": "var(--bg-color)", "borderRadius": "16px", "padding": "25px", "height": "100%", "border": "1px solid var(--grid-color)"}), 
                         width=4
                     )
                 ])
             ),
-            dbc.ModalFooter(
-                [
-                    dbc.Button(
-                        "Отмена", 
-                        id="btn-close-sql-modal", 
-                        style={"backgroundColor": "transparent", "border": "none", "color": "var(--text-muted)", "fontWeight": "600", "marginRight": "15px"}
-                    ),
-                    dbc.Button(
-                        [html.I(className="fas fa-save", style={"marginRight": "8px"}), "Сохранить и Применить"], 
-                        id="btn-save-sql-modal", 
-                        style={"backgroundColor": "var(--primary)", "border": "none", "borderRadius": "12px", "fontWeight": "600", "padding": "10px 20px"}
-                    )
-                ]
-            )
+            dbc.ModalFooter([
+                dbc.Button("Отмена", id="btn-close-sql-modal", style={"backgroundColor": "transparent", "border": "none", "color": "var(--text-muted)", "fontWeight": "600", "marginRight": "15px"}),
+                dbc.Button([html.I(className="fas fa-save", style={"marginRight": "8px"}), "Сохранить и Применить"], id="btn-save-sql-modal", style={"backgroundColor": "var(--primary)", "border": "none", "borderRadius": "12px", "fontWeight": "600", "padding": "10px 20px"})
+            ])
         ],
-        id="sql-editor-modal",
-        is_open=False,
-        size="xl",
-        centered=True,
+        id="sql-editor-modal", 
+        is_open=False, 
+        size="xl", 
+        centered=True, 
         backdrop="static"
     )
 ])
@@ -832,73 +1013,227 @@ def update_icon(theme):
     else:
         return "fas fa-moon"
 
-# Экспорт PDF
+# Экспорт в PDF
 app.clientside_callback(
     """
     function(n_clicks) {
         if (n_clicks) {
             var element = document.getElementById('pdf-export-container');
-
             var w = element.offsetWidth;
             var h = element.offsetHeight;
-            
             var opt = {
-              margin: 20,
-              filename: 'Clinical_Chart_Report.pdf',
-              image: { type: 'jpeg', quality: 1.0 },
-              html2canvas: { scale: 2, useCORS: true, logging: false },
-              // 2. ГЛАВНЫЙ ТРЮК: Задаем размер PDF файла точно по размеру элемента.
-              // Прибавляем по 40px, чтобы учесть margin (20px сверху/снизу и слева/справа).
-              // Теперь никаких пустых листов и разрывов!
-              jsPDF: { unit: 'px', format: [w + 40, h + 40], orientation: 'landscape' }
+                margin: 20,
+                filename: 'Clinical_Chart.pdf',
+                image: { type: 'jpeg', quality: 1.0 },
+                html2canvas: { scale: 2, useCORS: true, logging: false },
+                jsPDF: { unit: 'px', format: [w + 40, h + 40], orientation: 'landscape' }
             };
-
             html2pdf().set(opt).from(element).save();
         }
         return window.dash_clientside.no_update;
     }
     """,
     Output("btn-pdf", "id"), 
-    Input("btn-pdf", "n_clicks"),
+    Input("btn-pdf", "n_clicks"), 
     prevent_initial_call=True
 )
 
+# Линтер для SQL
+app.clientside_callback(
+    r"""
+    function(sql_text) {
+        if (!sql_text || sql_text.trim() === "") {
+            return ["", {"display": "none"}];
+        }
+        
+        var warnings = [];
+        var text = sql_text.trim();
+        
+        if (!text.endsWith(';')) {
+            warnings.push("⚠️ Забыта точка с запятой ( ; ) в конце");
+        }
+        
+        var openParens = (text.match(/\(/g) || []).length;
+        var closeParens = (text.match(/\)/g) || []).length;
+        if (openParens !== closeParens) {
+            warnings.push("⚠️ Незакрытые круглые скобки ( )");
+        }
+        
+        var openBrackets = (text.match(/\[/g) || []).length;
+        var closeBrackets = (text.match(/\]/g) || []).length;
+        if (openBrackets !== closeBrackets) {
+            warnings.push("⚠️ Незакрытые квадратные скобки [ ]");
+        }
+        
+        var singleQuotes = (text.match(/'/g) || []).length;
+        if (singleQuotes % 2 !== 0) {
+            warnings.push("⚠️ Пропущена одинарная кавычка '");
+        }
+        
+        var baseStyle = {
+            "marginTop": "8px", 
+            "fontSize": "13px", 
+            "fontWeight": "600", 
+            "minHeight": "20px", 
+            "transition": "color 0.3s ease"
+        };
+        
+        if (warnings.length > 0) {
+            baseStyle["color"] = "#FF7D00";
+            return [warnings.join("   |   "), baseStyle];
+        } else {
+            baseStyle["color"] = "#01B574";
+            return ["✅ Синтаксис выглядит отлично!", baseStyle];
+        }
+    }
+    """,
+    [
+        Output("sql-modal-linter", "children"),
+        Output("sql-modal-linter", "style")
+    ],
+    Input("sql-modal-input", "value"),
+    prevent_initial_call=False
+)
 
-# --- СЕРВЕРНЫЕ КОЛЛБЭКИ ---
+
+@app.callback(
+    [
+        Output("sql-editor-modal", "is_open"), 
+        Output("sql-modal-input", "value"), 
+        Output("sql-input", "value")
+    ],
+    [
+        Input("btn-expand-sql", "n_clicks"), 
+        Input("btn-save-sql-modal", "n_clicks"), 
+        Input("btn-close-sql-modal", "n_clicks")
+    ],
+    [
+        State("sql-editor-modal", "is_open"), 
+        State("sql-input", "value"), 
+        State("sql-modal-input", "value")
+    ],
+    prevent_initial_call=True
+)
+def toggle_sql_editor(exp, save, close, is_open, main_text, modal_text):
+    ctx = dash.callback_context
+    if not ctx.triggered: 
+        return is_open, dash.no_update, dash.no_update
+        
+    trig = ctx.triggered[0]['prop_id'].split('.')[0]
+    
+    if trig == "btn-expand-sql": 
+        return True, main_text, dash.no_update
+    elif trig == "btn-save-sql-modal": 
+        return False, dash.no_update, modal_text
+    elif trig == "btn-close-sql-modal": 
+        return False, dash.no_update, dash.no_update
+        
+    return is_open, dash.no_update, dash.no_update
+
+
+# --- НОВЫЕ КОЛЛБЭКИ ДЛЯ СЦЕНАРИЕВ ---
+
+@app.callback(
+    [
+        Output("presets-store", "data"), 
+        Output("dropdown-load-preset", "options"), 
+        Output("preset-msg", "children")
+    ],
+    [Input("btn-save-preset", "n_clicks")],
+    [
+        State("input-preset-name", "value"), 
+        State("presets-store", "data"), 
+        State("f-year", "value"), 
+        State("f-quarter", "value"), 
+        State("f-month", "value"), 
+        State("f-dept", "value"), 
+        State("f-profile", "value"),
+        State("f-mes", "value")
+    ],
+    prevent_initial_call=True
+)
+def save_preset(n_clicks, name, store_data, years, quarters, months, depts, profiles, mes):
+    """Сохраняет текущие фильтры под заданным именем в Local Storage браузера."""
+    if not name or name.strip() == "":
+        return dash.no_update, dash.no_update, "❌ Введите название пресета!"
+    
+    store_data = store_data or {}
+    store_data[name] = {
+        "years": years,
+        "quarters": quarters,
+        "months": months,
+        "depts": depts,
+        "profiles": profiles,
+        "mes": mes
+    }
+    
+    options = [{"label": k, "value": k} for k in store_data.keys()]
+    
+    return store_data, options, f"✅ Сценарий «{name}» успешно сохранен!"
+
+
+@app.callback(
+    [
+        Output("f-year", "value"), 
+        Output("f-quarter", "value"), 
+        Output("f-month", "value"), 
+        Output("f-dept", "value"), 
+        Output("f-profile", "value"),
+        Output("f-mes", "value")
+    ],
+    [Input("dropdown-load-preset", "value")],
+    [State("presets-store", "data")],
+    prevent_initial_call=True
+)
+def load_preset(selected_preset, store_data):
+    """При выборе пресета из списка — загружает сохраненные значения в фильтры."""
+    if not selected_preset or not store_data or selected_preset not in store_data:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    
+    preset = store_data[selected_preset]
+    
+    return preset.get("years"), preset.get("quarters"), preset.get("months"), preset.get("depts"), preset.get("profiles"), preset.get("mes")
+
+
+# --- СЕРВЕРНЫЕ КОЛЛБЭКИ ДЛЯ ГРАФИКОВ ---
 
 @app.callback(
     [
         Output("f-year", "options"), 
-        Output("f-quarter", "options"),
+        Output("f-quarter", "options"), 
         Output("f-month", "options"), 
         Output("f-dept", "options"), 
+        Output("f-profile", "options"),
         Output("f-mes", "options")
     ], 
     [
         Input("f-year", "value"), 
-        Input("f-quarter", "value"),
+        Input("f-quarter", "value"), 
         Input("f-month", "value"), 
         Input("f-dept", "value"), 
+        Input("f-profile", "value"),
         Input("f-mes", "value")
     ]
 )
-def update_smart_filters(years, quarters, months, depts, mes_list):
-    """Обновляет выпадающие списки фильтров, включая каскадную логику для Кварталов."""
+def update_smart_filters(years, quarters, months, depts, profiles, mes_list):
+    """Каскадная логика фильтров (теперь с профилем)."""
     df = get_optimized_data()
     
     if df.empty: 
-        return [[], [], [], [], []]
+        return [[], [], [], [], [], []]
     
     def get_mask_for(skip_col: str):
         mask = pd.Series(True, index=df.index)
         if skip_col != 'Year' and years: 
             mask &= df['Year'].isin(years)
-        if skip_col != 'Quarter' and quarters:
+        if skip_col != 'Quarter' and quarters: 
             mask &= df['Quarter_Name'].isin(quarters)
         if skip_col != 'Month' and months: 
             mask &= df['Month_Name'].isin(months)
         if skip_col != 'Dept' and depts: 
             mask &= df['Наименование отделения'].isin(depts)
+        if skip_col != 'Profile' and profiles:
+            mask &= df['Наименование профиля'].isin(profiles)
         if skip_col != 'MES' and mes_list: 
             mask &= df['Код Услуги'].isin(mes_list)
         return mask
@@ -906,28 +1241,32 @@ def update_smart_filters(years, quarters, months, depts, mes_list):
     opts_year = []
     if 'Year' in df.columns:
         opts_year = sorted(df.loc[get_mask_for('Year'), 'Year'].unique())
-
+        
     opts_quarter = []
     if 'Quarter_Num' in df.columns:
-        unique_quarters = df.loc[get_mask_for('Quarter')].drop_duplicates(['Quarter_Num', 'Quarter_Name']).sort_values('Quarter_Num')
-        for _, row in unique_quarters.iterrows():
+        uq = df.loc[get_mask_for('Quarter')].drop_duplicates(['Quarter_Num', 'Quarter_Name']).sort_values('Quarter_Num')
+        for _, row in uq.iterrows():
             opts_quarter.append({"label": row['Quarter_Name'], "value": row['Quarter_Name']})
-        
+            
     opts_month = []
     if 'Month_Num' in df.columns:
-        unique_months = df.loc[get_mask_for('Month')].drop_duplicates(['Month_Num', 'Month_Name']).sort_values('Month_Num')
-        for _, row in unique_months.iterrows():
+        um = df.loc[get_mask_for('Month')].drop_duplicates(['Month_Num', 'Month_Name']).sort_values('Month_Num')
+        for _, row in um.iterrows():
             opts_month.append({"label": row['Month_Name'], "value": row['Month_Name']})
             
     opts_dept = []
     if 'Наименование отделения' in df.columns:
         opts_dept = sorted(df.loc[get_mask_for('Dept'), 'Наименование отделения'].dropna().unique())
         
+    opts_profile = []
+    if 'Наименование профиля' in df.columns:
+        opts_profile = sorted(df.loc[get_mask_for('Profile'), 'Наименование профиля'].dropna().unique())
+        
     opts_mes = []
     if 'Код Услуги' in df.columns:
         opts_mes = sorted(df.loc[get_mask_for('MES'), 'Код Услуги'].dropna().unique())
     
-    return [opts_year, opts_quarter, opts_month, opts_dept, opts_mes]
+    return [opts_year, opts_quarter, opts_month, opts_dept, opts_profile, opts_mes]
 
 
 @app.callback(
@@ -938,40 +1277,47 @@ def update_smart_filters(years, quarters, months, depts, mes_list):
         Output("kpi-patients", "children"), 
         Output("kpi-mes", "children"), 
         Output("kpi-depts", "children"), 
-        Output("smart-insights-container", "children")
+        Output("smart-insights-container", "children"),
+        Output("heatmap-chart", "figure"), 
+        Output("ag-grid-container", "children")
     ],
     [
         Input("f-year", "value"), 
-        Input("f-quarter", "value"),
+        Input("f-quarter", "value"), 
         Input("f-month", "value"), 
         Input("f-dept", "value"), 
+        Input("f-profile", "value"),
         Input("f-mes", "value"), 
         Input("f-metric", "value"), 
         Input("f-group-by", "value"), 
         Input("theme-store", "data")
     ]
 )
-def update_standard_dashboard(years, quarters, months, depts, mes_list, metric, group_by_col, theme):
+def update_standard_dashboard(years, quarters, months, depts, profiles, mes_list, metric, group_by_col, theme):
     df = get_optimized_data()
     insight_html = html.Div("Загрузка данных...", style={"color": "var(--text-muted)"})
+    empty_fig = go.Figure()
     
     if df.empty: 
-        return go.Figure(), "Аналитика по времени", "0 ₽", "0", "0", "0", insight_html
+        return empty_fig, "Аналитика по времени", "0 ₽", "0", "0", "0", insight_html, empty_fig, html.Div("Нет данных")
 
     mask = pd.Series(True, index=df.index)
     if years: 
         mask &= df['Year'].isin(years)
-    if quarters:
+    if quarters: 
         mask &= df['Quarter_Name'].isin(quarters)
     if months: 
         mask &= df['Month_Name'].isin(months)
     if depts: 
         mask &= df['Наименование отделения'].isin(depts)
+    if profiles:
+        mask &= df['Наименование профиля'].isin(profiles)
     if mes_list: 
         mask &= df['Код Услуги'].isin(mes_list)
 
     filtered_df = df[mask].copy()
 
+    # --- 1. РАСЧЕТ KPI ---
     if 'Сумма' in filtered_df.columns:
         total_sum = f"{filtered_df['Сумма'].sum():,.2f} ₽".replace(",", " ").replace(".", ",")
     else:
@@ -998,7 +1344,7 @@ def update_standard_dashboard(years, quarters, months, depts, mes_list, metric, 
         tickvals = unique_dates
         ticktext = [f"{MONTHS_RU[pd.Timestamp(d).month]} {pd.Timestamp(d).year}" for d in unique_dates]
 
-    # --- Расчет Сводки ---
+    # --- 2. РАСЧЕТ СВОДКИ ---
     try:
         if not filtered_df.empty and 'dt' in filtered_df.columns:
             filtered_df['YearMonth'] = filtered_df['dt'].dt.to_period('M')
@@ -1055,7 +1401,7 @@ def update_standard_dashboard(years, quarters, months, depts, mes_list, metric, 
                             html.Span(f" {m_icon} ", style={"margin": "0 4px"}), 
                             f"{m_sign}{diff_str} ({m_sign}{perc_mom:.1f}%)"
                         ], style={"color": m_color, "fontSize": "12px", "fontWeight": "700"})
-                    
+                        
                     badge = html.Div([
                         html.Span(f"{m_name} {y_val}: ", style={"color": "var(--text-muted)", "marginRight": "4px"}), 
                         html.Span(f"{fmt(val)}", style={"color": "var(--text-main)"}), 
@@ -1083,6 +1429,7 @@ def update_standard_dashboard(years, quarters, months, depts, mes_list, metric, 
                         last_val = trend_df.iloc[-1]['val']
                         
                     diff = last_val - first_val
+                    
                     if first_val != 0:
                         perc = (diff / first_val) * 100
                     else:
@@ -1134,7 +1481,7 @@ def update_standard_dashboard(years, quarters, months, depts, mes_list, metric, 
     except Exception as e: 
         insight_html = html.Div(f"Ошибка Сводки: {str(e)}", style={"color": "#E11D48"})
 
-    # --- Построение линий ---
+    # --- 3. ГЛАВНЫЙ ГРАФИК ЛИНИЙ ---
     if not filtered_df.empty and 'dt' in filtered_df.columns and group_by_col in filtered_df.columns:
         
         labels_map = {
@@ -1170,7 +1517,7 @@ def update_standard_dashboard(years, quarters, months, depts, mes_list, metric, 
         for i, group_val in enumerate(trend[group_by_col].unique()):
             g_data = trend[trend[group_by_col] == group_val]
             c = colors[i % len(colors)]
-
+            
             custom_data_formatted = [f"STD|{group_val}"] * len(g_data)
             
             fig.add_trace(go.Scatter(
@@ -1187,8 +1534,105 @@ def update_standard_dashboard(years, quarters, months, depts, mes_list, metric, 
             ))
 
     fig = apply_beautiful_layout(fig, theme, x_range, tickvals, ticktext)
-    
-    return fig, "Аналитика по времени (Нажмите на любую точку для детализации 🔍)", total_sum, total_patients, total_mes, active_depts, insight_html
+
+    # --- 4. ТЕПЛОВАЯ КАРТА ДЛЯ НОВОЙ ВКЛАДКИ ---
+    heatmap_fig = go.Figure()
+    if not filtered_df.empty and 'dt' in filtered_df.columns and 'Наименование отделения' in filtered_df.columns:
+        
+        filtered_df['Month_Str'] = filtered_df['dt'].dt.strftime('%Y-%m') 
+        
+        if metric == "sum":
+            pivot = filtered_df.pivot_table(index='Наименование отделения', columns='Month_Str', values='Сумма', aggfunc='sum', fill_value=0)
+            hm_template = "<b>Месяц:</b> %{x}<br><b>Отделение:</b> %{y}<br><b>Сумма:</b> %{z:,.2f} ₽<extra></extra>"
+        elif metric == "count_patients":
+            pivot = filtered_df.pivot_table(index='Наименование отделения', columns='Month_Str', values='ИД пациента в версии счета', aggfunc=pd.Series.nunique, fill_value=0)
+            hm_template = "<b>Месяц:</b> %{x}<br><b>Отделение:</b> %{y}<br><b>Пациентов:</b> %{z:,.0f} чел.<extra></extra>"
+        else:
+            pivot = filtered_df.pivot_table(index='Наименование отделения', columns='Month_Str', values='Период', aggfunc='count', fill_value=0)
+            hm_template = "<b>Месяц:</b> %{x}<br><b>Отделение:</b> %{y}<br><b>Услуг:</b> %{z:,.0f} ед.<extra></extra>"
+
+        colorscale = "Blues" if theme == "light" else "Viridis"
+        
+        heatmap_fig.add_trace(go.Heatmap(
+            z=pivot.values, 
+            x=pivot.columns, 
+            y=pivot.index,
+            colorscale=colorscale, 
+            hovertemplate=hm_template
+        ))
+        
+        heatmap_fig = apply_beautiful_layout(heatmap_fig, theme)
+
+        num_departments = len(pivot.index)
+        dynamic_height = max(400, (num_departments * 35) + 150)
+        
+        heatmap_fig.update_layout(
+            height=dynamic_height,
+            xaxis=dict(showgrid=False), 
+            yaxis=dict(showgrid=False, automargin=True, tickfont=dict(size=11))
+        )
+
+    # --- 5. AG GRID ТАБЛИЦА ДЛЯ НОВОЙ ВКЛАДКИ ---
+    ag_grid = html.Div("Нет данных для таблицы")
+    if not filtered_df.empty:
+        
+        agg_cols = ['Наименование отделения', 'Наименование профиля']
+        agg_cols = [c for c in agg_cols if c in filtered_df.columns]
+        
+        if agg_cols:
+            if 'Сумма' in filtered_df.columns:
+                grid_df = filtered_df.groupby(agg_cols, observed=True).agg(
+                    Кол_во_услуг=('Период', 'count'),
+                    Сумма=('Сумма', 'sum')
+                ).reset_index()
+                grid_df['Сумма'] = grid_df['Сумма'].round(2)
+            else:
+                grid_df = filtered_df.groupby(agg_cols, observed=True).agg(
+                    Кол_во_услуг=('Период', 'count')
+                ).reset_index()
+            
+            column_defs = []
+            for col in grid_df.columns:
+                if col in ['Кол_во_услуг', 'Сумма']:
+                    col_filter = "agNumberColumnFilter"
+                else:
+                    col_filter = "agSetColumnFilter"
+                    
+                column_defs.append({
+                    "field": col, 
+                    "filter": col_filter, 
+                    "sortable": True
+                })
+            
+            grid_theme = "ag-theme-alpine" if theme == "light" else "ag-theme-alpine-dark"
+            
+            ag_grid = dag.AgGrid(
+                id="interactive-grid",
+                rowData=grid_df.to_dict("records"),
+                columnDefs=column_defs,
+                defaultColDef={"flex": 1, "minWidth": 150, "floatingFilter": True},
+                className=grid_theme,
+                enableEnterpriseModules=True,
+                dashGridOptions={
+                    "localeText": AG_GRID_LOCALE_RU,
+                    "pagination": True,
+                    "paginationPageSize": 15
+                },
+
+                csvExportParams={
+                    "fileName": "Table_Export.csv",
+                    "columnSeparator": ";" 
+                },
+                
+                style={
+                    "height": "600px", 
+                    "width": "100%", 
+                    "borderRadius": "12px", 
+                    "overflow": "hidden"
+                }
+            )
+
+    return fig, "Аналитика по времени (Нажмите на любую точку для детализации 🔍)", total_sum, total_patients, total_mes, active_depts, insight_html, heatmap_fig, ag_grid
 
 
 @app.callback(
@@ -1208,46 +1652,36 @@ def update_standard_dashboard(years, quarters, months, depts, mes_list, metric, 
     ]
 )
 def drilldown_modal(clickData, close_clicks, is_open, group_by_col, metric):
-    """
-    Открывает модальное окно. 
-    Блокирует открытие, если клик был сделан на результате SQL-песочницы.
-    """
+    """Модальное окно для детализации графика."""
     ctx = dash.callback_context
     if not ctx.triggered: 
         return is_open, dash.no_update, dash.no_update
         
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
-    
     if trigger_id == "close-modal": 
         return False, "", ""
         
     if clickData and trigger_id == "main-line-chart":
         point = clickData['points'][0]
         custom_info = str(point.get('customdata', ''))
-
+        
         if custom_info.startswith("SQL"):
             modal_title = "Информация"
             modal_body = html.Div(
                 "Детализация доступна только в стандартном режиме (по фильтрам). В режиме SQL-песочницы график является прямым результатом вашего запроса.", 
-                style={
-                    "color": "var(--text-muted)", 
-                    "fontSize": "16px", 
-                    "textAlign": "center", 
-                    "padding": "20px"
-                }
+                style={"color": "var(--text-muted)", "fontSize": "16px", "textAlign": "center", "padding": "20px"}
             )
             return True, modal_title, modal_body
             
         clicked_date = point['x']
-        
         if "|" in custom_info:
             clicked_group = custom_info.split("|")[1]
         else:
             clicked_group = custom_info
-        
+            
         df = get_optimized_data()
         date_str = clicked_date.split(' ')[0]
-
+        
         mask = (df['dt'].astype(str).str.startswith(date_str)) & (df[group_by_col] == clicked_group)
         df_filtered = df[mask]
         
@@ -1264,7 +1698,6 @@ def drilldown_modal(clickData, close_clicks, is_open, group_by_col, metric):
             breakdown = breakdown.sort_values('val', ascending=False)
         
         top_n = breakdown.head(10)
-        modal_title = f"Детализация: {clicked_group} ({date_str})"
         
         if metric == 'sum':
             x_data = top_n['Сумма']
@@ -1274,24 +1707,25 @@ def drilldown_modal(clickData, close_clicks, is_open, group_by_col, metric):
             text_template = '%{x:,.0f}'
             
         fig_modal = go.Figure(go.Bar(
-            x=x_data,
-            y=top_n[drill_col],
+            x=x_data, 
+            y=top_n[drill_col], 
             orientation='h', 
-            marker_color="var(--primary)",
+            marker_color="var(--primary)", 
             texttemplate=text_template, 
             textposition='outside'
         ))
         
         fig_modal.update_layout(
             margin=dict(l=10, r=40, t=10, b=10), 
-            yaxis=dict(autorange="reversed"),
+            yaxis=dict(autorange="reversed"), 
             plot_bgcolor="rgba(0,0,0,0)", 
-            paper_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)", 
             xaxis=dict(showgrid=True, gridcolor="var(--grid-color)")
         )
         
+        modal_title = f"Детализация: {clicked_group} ({date_str})"
         modal_body = html.Div([
-            html.P(f"Топ-10 по разрезу: {drill_col}", style={"color": "var(--text-muted)", "fontWeight": "600"}),
+            html.P(f"Топ-10 по разрезу: {drill_col}", style={"color": "var(--text-muted)", "fontWeight": "600"}), 
             dcc.Graph(figure=fig_modal, config={'displayModeBar': False}, style={"height": "350px"})
         ])
         
@@ -1315,13 +1749,11 @@ def drilldown_modal(clickData, close_clicks, is_open, group_by_col, metric):
     prevent_initial_call=True
 )
 def execute_custom_sql(n_clicks, query, theme):
-    """
-    Выполнение SQL запроса с помощью DuckDB.
-    """
+    """Выполнение SQL запроса с помощью DuckDB."""
     sql_insight = html.Div([
         html.I(className="fas fa-bolt", style={"color": "#FF7D00", "marginRight": "12px", "fontSize": "20px"}), 
-        html.Span("Сверхбыстрый DuckDB: ", style={"fontWeight": "800", "color": "var(--text-main)"}), 
-        html.Span("Запрос выполнен. Ознакомьтесь с графиком", style={"color": "var(--text-muted)"})
+        html.Span("DuckDB: ", style={"fontWeight": "800", "color": "var(--text-main)"}), 
+        html.Span("Запрос выполнен. Ознакомьтесь с запросом.", style={"color": "var(--text-muted)"})
     ])
     
     if not query or not query.strip(): 
@@ -1329,9 +1761,8 @@ def execute_custom_sql(n_clicks, query, theme):
         
     try:
         df = get_optimized_data()
-
         safe_query = query.replace('[', '"').replace(']', '"')
-
+        
         duckdb.register('medical_data', df)
         df_sql = duckdb.query(safe_query).df()
         
@@ -1355,17 +1786,17 @@ def execute_custom_sql(n_clicks, query, theme):
                 has_numeric = True
                 
                 current_max = df_sql[col].max()
-                if current_max > max_y_value:
+                if current_max > max_y_value: 
                     max_y_value = current_max
                     
                 c = colors[color_idx % len(colors)]
-                
                 col_name_lower = str(col).lower()
+                
                 if "сумм" in col_name_lower or "sum" in col_name_lower:
                     y_format = "%{y:,.2f} ₽"
                 else:
                     y_format = "%{y:,.0f}"
-
+                    
                 custom_data_sql = ["SQL|None"] * len(df_sql)
                 
                 fig.add_trace(go.Scatter(
@@ -1377,34 +1808,34 @@ def execute_custom_sql(n_clicks, query, theme):
                     marker=dict(size=12, color=c["hex"]), 
                     fill='tozeroy', 
                     fillcolor=c["rgba"], 
-                    hovertemplate=f"<b>Ось X:</b> %{{x}}<br><b>{str(col)}:</b> {y_format}<extra></extra>",
+                    hovertemplate=f"<b>Ось X:</b> %{{x}}<br><b>{str(col)}:</b> {y_format}<extra></extra>", 
                     customdata=custom_data_sql
                 ))
                 color_idx += 1
 
         if not has_numeric: 
             return dash.no_update, dash.no_update, "⚠️ Нужна хотя бы одна числовая колонка.", dash.no_update
-        
+            
         def format_label(label, max_len=35):
             s = str(label)
             if len(s) > max_len:
                 words = s.split()
-                if len(words) > 2:
-                    mid = len(words) // 2
-                    s = " ".join(words[:mid]) + "<br>" + " ".join(words[mid:])
+                if len(words) > 2: 
+                    s = " ".join(words[:len(words)//2]) + "<br>" + " ".join(words[len(words)//2:])
             if len(s) > max_len * 2:
                 return s[:max_len * 2] + "..."
             return s
             
         x_range = [-0.5, len(df_sql) - 0.5]
+        
         if max_y_value > 0:
-            y_padding = max_y_value * 0.05
-        else:
+            y_padding = max_y_value * 0.05 
+        else: 
             y_padding = 10
             
         tickvals = df_sql[x_col].tolist()
         ticktext = [format_label(v) for v in df_sql[x_col]]
-            
+        
         fig = apply_beautiful_layout(fig, theme, x_range=x_range, tickvals=tickvals, ticktext=ticktext)
         fig.update_yaxes(range=[-y_padding, max_y_value + y_padding])
         fig.update_layout(xaxis_tickangle=-30)
@@ -1419,141 +1850,59 @@ def execute_custom_sql(n_clicks, query, theme):
     Output("download-xlsx", "data"), 
     Input("btn-dl", "n_clicks"), 
     [
-        State("f-year", "value"),
-        State("f-quarter", "value"),
+        State("f-year", "value"), 
+        State("f-quarter", "value"), 
         State("f-month", "value"), 
         State("f-dept", "value"), 
+        State("f-profile", "value"),
         State("f-mes", "value")
     ], 
     prevent_initial_call=True
 )
-def export_excel(n_clicks, years, quarters, months, depts, mes_list):
-    """
-    Экспортирует отфильтрованные данные обратно в Excel-файл.
-    """
+def export_excel(n_clicks, years, quarters, months, depts, profiles, mes_list):
+    """Экспортирует отфильтрованные данные обратно в Excel-файл."""
     df = get_optimized_data()
     mask = pd.Series(True, index=df.index)
     
     if years and 'Year' in df.columns: 
         mask &= df['Year'].isin(years)
-    if quarters and 'Quarter_Name' in df.columns:
+    if quarters and 'Quarter_Name' in df.columns: 
         mask &= df['Quarter_Name'].isin(quarters)
     if months and 'Month_Name' in df.columns: 
         mask &= df['Month_Name'].isin(months)
     if depts and 'Наименование отделения' in df.columns: 
         mask &= df['Наименование отделения'].isin(depts)
+    if profiles and 'Наименование профиля' in df.columns:
+        mask &= df['Наименование профиля'].isin(profiles)
     if mes_list and 'Код Услуги' in df.columns: 
         mask &= df['Код Услуги'].isin(mes_list)
 
     filtered_df = df[mask].copy()
 
     cols_to_drop = ['dt', 'Year', 'Month_Num', 'Month_Name', 'Quarter_Num', 'Quarter_Name']
-    filtered_df = filtered_df.drop(columns=[c for c in cols_to_drop if c in filtered_df.columns])
+    
+    columns_to_actually_drop = []
+    for col in cols_to_drop:
+        if col in filtered_df.columns:
+            columns_to_actually_drop.append(col)
+            
+    filtered_df = filtered_df.drop(columns=columns_to_actually_drop)
     
     return dcc.send_data_frame(filtered_df.to_excel, "Clinical_Report_Export.xlsx", index=False)
 
-@app.callback(
-    [
-        Output("sql-editor-modal", "is_open"),
-        Output("sql-modal-input", "value"),
-        Output("sql-input", "value")
-    ],
-    [
-        Input("btn-expand-sql", "n_clicks"),
-        Input("btn-save-sql-modal", "n_clicks"),
-        Input("btn-close-sql-modal", "n_clicks")
-    ],
-    [
-        State("sql-editor-modal", "is_open"),
-        State("sql-input", "value"),
-        State("sql-modal-input", "value")
-    ],
-    prevent_initial_call=True
-)
-def toggle_sql_editor(expand_clicks, save_clicks, close_clicks, is_open, main_text, modal_text):
-    """
-    Управляет открытием модального окна и синхронизирует код 
-    между маленькой песочницей и полноэкранным редактором.
-    """
-    ctx = dash.callback_context
-    if not ctx.triggered:
-        return is_open, dash.no_update, dash.no_update
-
-    trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
-
-    if trigger_id == "btn-expand-sql":
-        return True, main_text, dash.no_update
-        
-    elif trigger_id == "btn-save-sql-modal":
-        return False, dash.no_update, modal_text
-        
-    elif trigger_id == "btn-close-sql-modal":
-        return False, dash.no_update, dash.no_update
-
-    return is_open, dash.no_update, dash.no_update
 
 app.clientside_callback(
-    r"""
-    function(sql_text) {
-        // Если поле пустое, скрываем линтер
-        if (!sql_text || sql_text.trim() === "") {
-            return ["", {"display": "none"}];
+    """
+    function(n_clicks) {
+        if (n_clicks) {
+            return true;
         }
-        
-        var warnings = [];
-        var text = sql_text.trim();
-        
-        // 1. Проверка на наличие точки с запятой в самом конце
-        if (!text.endsWith(';')) {
-            warnings.push("⚠️ Забыта точка с запятой ( ; ) в конце");
-        }
-        
-        // 2. Проверка парных круглых скобок
-        var openParens = (text.match(/\(/g) || []).length;
-        var closeParens = (text.match(/\)/g) || []).length;
-        if (openParens !== closeParens) {
-            warnings.push("⚠️ Незакрытые круглые скобки ( )");
-        }
-        
-        // 3. Проверка парных квадратных скобок
-        var openBrackets = (text.match(/\[/g) || []).length;
-        var closeBrackets = (text.match(/\]/g) || []).length;
-        if (openBrackets !== closeBrackets) {
-            warnings.push("⚠️ Незакрытые квадратные скобки [ ]");
-        }
-        
-        // 4. Проверка одинарных кавычек (строковые значения)
-        var singleQuotes = (text.match(/'/g) || []).length;
-        if (singleQuotes % 2 !== 0) {
-            warnings.push("⚠️ Пропущена одинарная кавычка '");
-        }
-        
-        // Базовый стиль для текста линтера
-        var baseStyle = {
-            "marginTop": "8px", 
-            "fontSize": "13px", 
-            "fontWeight": "600", 
-            "minHeight": "20px", 
-            "transition": "color 0.3s ease"
-        };
-        
-        // Если есть ошибки — выводим их оранжевым цветом
-        if (warnings.length > 0) {
-            baseStyle["color"] = "#FF7D00";
-            return [warnings.join("   |   "), baseStyle];
-        } else {
-            // Если все идеально - зеленым
-            baseStyle["color"] = "#01B574";
-            return ["✅ Синтаксис выглядит отлично!", baseStyle];
-        }
+        return window.dash_clientside.no_update;
     }
     """,
-    [
-        Output("sql-modal-linter", "children"),
-        Output("sql-modal-linter", "style")
-    ],
-    Input("sql-modal-input", "value"),
-    prevent_initial_call=False
+    Output("interactive-grid", "exportDataAsCsv"),
+    Input("btn-export-grid", "n_clicks"),
+    prevent_initial_call=True
 )
 
 
