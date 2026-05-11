@@ -54,10 +54,16 @@ def clean_dataframe(df: pd.DataFrame, file_name: str) -> pd.DataFrame:
     return df
 
 def process_excel_files(file_paths: Tuple[str, ...]) -> Tuple[int, int]:
+    """
+    Обрабатывает Excel-файлы, безопасно заменяет старые данные на новые 
+    через транзакции и ведет детальный лог изменений.
+    """
     success_count = 0
     total_rows_inserted = 0
 
     with sqlite3.connect(DB_NAME) as conn:
+        cursor = conn.cursor()
+        
         for file_path in file_paths:
             file_name = os.path.basename(file_path)
             logger.info(f"Начало обработки файла: {file_name}")
@@ -67,18 +73,63 @@ def process_excel_files(file_paths: Tuple[str, ...]) -> Tuple[int, int]:
                 df_cleaned = clean_dataframe(df, file_name)
                 
                 if df_cleaned.empty:
-                    logger.warning(f"Файл {file_name} пуст. Пропуск.")
+                    logger.warning(f"Файл {file_name} пуст или не содержит полезных данных. Пропуск.")
                     continue
 
+                if 'Период' not in df_cleaned.columns or 'Наименование отделения' not in df_cleaned.columns:
+                    logger.error(f"В файле {file_name} отсутствуют колонки 'Период' или 'Отделение'. Файл пропущен.")
+                    continue
+
+                cursor.execute("BEGIN TRANSACTION")
+
+                cursor.execute("SELECT count(name) FROM sqlite_master WHERE type='table' AND name=?", (TABLE_NAME,))
+                table_exists = cursor.fetchone()[0] == 1
+
+                if table_exists:
+
+                    unique_groups = df_cleaned[['Период', 'Наименование отделения']].dropna().drop_duplicates()
+                    
+                    changes_log = []
+                    deleted_total = 0
+
+                    for _, row in unique_groups.iterrows():
+                        period = str(row['Период']).strip()
+                        dept = str(row['Наименование отделения']).strip()
+                        
+                        if not period or not dept:
+                            continue 
+                        cursor.execute(
+                            f'DELETE FROM {TABLE_NAME} WHERE "Период" = ? AND "Наименование отделения" = ?',
+                            (period, dept)
+                        )
+                        
+                        deleted_rows = cursor.rowcount
+                        if deleted_rows > 0:
+                            deleted_total += deleted_rows
+                            changes_log.append(f"[{period} | {dept}] удалено старых строк: {deleted_rows}")
+
+                    if changes_log:
+                        logger.info(f"Обнаружено перекрытие данных! Очищено {deleted_total} старых записей перед обновлением:")
+                        for log_msg in changes_log:
+                            logger.info(f"  -> {log_msg}")
+
                 df_cleaned.to_sql(TABLE_NAME, conn, if_exists='append', index=False, chunksize=10000)
+
+                conn.commit()
                 
                 rows_added = len(df_cleaned)
                 total_rows_inserted += rows_added
                 success_count += 1
-                logger.info(f"Успех! Файл {file_name} обработан. Записей добавлено: {rows_added}")
+                
+                logger.info(f"Успех! Файл {file_name} обработан. Записано свежих строк: {rows_added}")
                 
             except Exception as e:
-                logger.error(f"Ошибка при чтении файла {file_name}: {str(e)}", exc_info=True)
+                conn.rollback()
+                logger.error(
+                    f"Критическая ошибка при обработке {file_name}. "
+                    f"Все изменения (удаления и записи) ОТМЕНЕНЫ! Ошибка: {str(e)}", 
+                    exc_info=True
+                )
 
     return success_count, total_rows_inserted
 
