@@ -27,6 +27,8 @@ def clean_dataframe(df: pd.DataFrame, file_name: str) -> pd.DataFrame:
     """
     Легкая очистка данных перед вставкой в БД.
     """
+    df.columns = df.columns.str.replace(r'\n|\r', ' ', regex=True).str.replace(r'\s+', ' ', regex=True).str.strip()
+
     df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
 
     if df.empty:

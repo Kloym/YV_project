@@ -362,14 +362,16 @@ def apply_beautiful_layout(fig: go.Figure, theme: str, x_range=None, tickvals=No
         plot_bgcolor="rgba(0,0,0,0)", 
         paper_bgcolor="rgba(0,0,0,0)", 
         margin=dict(l=10, r=10, t=30, b=10),
+
         legend=dict(
-            orientation="h", 
-            yanchor="bottom", 
-            y=1.05, 
-            xanchor="right", 
-            x=1, 
-            font=dict(color=text_color, size=13)
+            orientation="v", 
+            yanchor="middle", 
+            y=0.5, 
+            xanchor="left", 
+            x=1.02, 
+            font=dict(color=text_color, size=11)
         ),
+        
         xaxis=xaxis_config,
         yaxis=dict(
             showgrid=True, 
@@ -750,7 +752,8 @@ app.layout = html.Div([
                                                         html.Span("Код Услуги", className="schema-badge"), 
                                                         html.Span("Наименование профиля", className="schema-badge"), 
                                                         html.Span("ИД пациента в версии счета", className="schema-badge"), 
-                                                        html.Span("Сумма", className="schema-badge")
+                                                        html.Span("Сумма", className="schema-badge"),
+                                                        html.Span("Номер ИБ", className="schema-badge"),
                                                     ]),
                                                     html.Div([
                                                         html.I(className="fas fa-lightbulb", style={"marginRight": "8px", "color": "#FF7D00"}),
@@ -958,7 +961,8 @@ app.layout = html.Div([
                                 html.Span("Код Услуги", className="schema-badge", style={"width": "100%", "textAlign": "left"}), 
                                 html.Span("Наименование профиля", className="schema-badge", style={"width": "100%", "textAlign": "left"}), 
                                 html.Span("ИД пациента в версии счета", className="schema-badge", style={"width": "100%", "textAlign": "left"}), 
-                                html.Span("Сумма", className="schema-badge", style={"width": "100%", "textAlign": "left"})
+                                html.Span("Сумма", className="schema-badge", style={"width": "100%", "textAlign": "left"}),
+                                html.Span("Номер ИБ", className="schema-badge", style={"width": "100%", "textAlign": "left"})
                             ]),
 
                             html.Div([
@@ -1517,19 +1521,34 @@ def update_standard_dashboard(years, quarters, months, depts, profiles, mes_list
         for i, group_val in enumerate(trend[group_by_col].unique()):
             g_data = trend[trend[group_by_col] == group_val]
             c = colors[i % len(colors)]
-            
             custom_data_formatted = [f"STD|{group_val}"] * len(g_data)
+
+            full_name = str(group_val)
+            short_name = full_name if len(full_name) <= 35 else full_name[:32] + "..."
+
+            if metric == "sum":
+                ht = f"<b>Дата:</b> %{{x}}<br><b>{hover_title}:</b> {full_name}<br><b>Сумма:</b> %{{y:,.2f}} ₽<extra></extra>"
+                text_vals = g_data[y_col].apply(lambda x: f"{x/1000:,.0f}k" if x >= 10000 else f"{x:,.0f}")
+            elif metric == "count_patients":
+                ht = f"<b>Дата:</b> %{{x}}<br><b>{hover_title}:</b> {full_name}<br><b>Пациентов:</b> %{{y:,.0f}} чел.<extra></extra>"
+                text_vals = g_data[y_col].apply(lambda x: f"{x:,.0f}")
+            else:
+                ht = f"<b>Дата:</b> %{{x}}<br><b>{hover_title}:</b> {full_name}<br><b>Оказано:</b> %{{y:,.0f}} ед.<extra></extra>"
+                text_vals = g_data[y_col].apply(lambda x: f"{x:,.0f}")
             
             fig.add_trace(go.Scatter(
                 x=g_data['dt'], 
                 y=g_data[y_col], 
-                name=str(group_val), 
-                mode='lines+markers', 
+                name=short_name,
+                mode='lines+markers+text',
+                text=text_vals,
+                textposition="top center",
+                textfont=dict(size=11, color=c["hex"], weight="bold"),
                 line=dict(width=4, shape='spline', smoothing=1.3, color=c["hex"]), 
                 marker=dict(size=12, color=c["hex"]), 
                 fill='tozeroy', 
                 fillcolor=c["rgba"], 
-                hovertemplate=ht, 
+                hovertemplate=ht,
                 customdata=custom_data_formatted
             ))
 
@@ -1576,7 +1595,7 @@ def update_standard_dashboard(years, quarters, months, depts, profiles, mes_list
     ag_grid = html.Div("Нет данных для таблицы")
     if not filtered_df.empty:
         
-        agg_cols = ['Наименование отделения', 'Наименование профиля']
+        agg_cols = ['Наименование отделения', 'Наименование профиля', 'Код Услуги', 'Номер ИБ']
         agg_cols = [c for c in agg_cols if c in filtered_df.columns]
         
         if agg_cols:
@@ -1618,12 +1637,7 @@ def update_standard_dashboard(years, quarters, months, depts, profiles, mes_list
                     "pagination": True,
                     "paginationPageSize": 15
                 },
-
-                csvExportParams={
-                    "fileName": "Table_Export.csv",
-                    "columnSeparator": ";" 
-                },
-                
+                csvExportParams={"fileName": "Clinical_Table_Export.csv", "columnSeparator": ";"},
                 style={
                     "height": "600px", 
                     "width": "100%", 
@@ -1633,7 +1647,6 @@ def update_standard_dashboard(years, quarters, months, depts, profiles, mes_list
             )
 
     return fig, "Аналитика по времени (Нажмите на любую точку для детализации 🔍)", total_sum, total_patients, total_mes, active_depts, insight_html, heatmap_fig, ag_grid
-
 
 @app.callback(
     [
@@ -1652,7 +1665,7 @@ def update_standard_dashboard(years, quarters, months, depts, profiles, mes_list
     ]
 )
 def drilldown_modal(clickData, close_clicks, is_open, group_by_col, metric):
-    """Модальное окно для детализации графика."""
+    """Модальное окно для умной детализации с текстовым пояснением."""
     ctx = dash.callback_context
     if not ctx.triggered: 
         return is_open, dash.no_update, dash.no_update
@@ -1666,67 +1679,123 @@ def drilldown_modal(clickData, close_clicks, is_open, group_by_col, metric):
         custom_info = str(point.get('customdata', ''))
         
         if custom_info.startswith("SQL"):
-            modal_title = "Информация"
-            modal_body = html.Div(
-                "Детализация доступна только в стандартном режиме (по фильтрам). В режиме SQL-песочницы график является прямым результатом вашего запроса.", 
-                style={"color": "var(--text-muted)", "fontSize": "16px", "textAlign": "center", "padding": "20px"}
-            )
-            return True, modal_title, modal_body
+            return True, "Информация", html.Div("Детализация доступна только в стандартном режиме.")
             
         clicked_date = point['x']
-        if "|" in custom_info:
-            clicked_group = custom_info.split("|")[1]
-        else:
-            clicked_group = custom_info
+        clicked_group = custom_info.split("|")[1] if "|" in custom_info else custom_info
             
         df = get_optimized_data()
         date_str = clicked_date.split(' ')[0]
-        
-        mask = (df['dt'].astype(str).str.startswith(date_str)) & (df[group_by_col] == clicked_group)
+
+        mask = (df['dt'].astype(str).str.startswith(date_str)) & (df[group_by_col].astype(str) == str(clicked_group))
         df_filtered = df[mask]
-        
-        if group_by_col != "Наименование профиля":
-            drill_col = "Наименование профиля"
-        else:
+
+        if group_by_col == "Наименование отделения":
             drill_col = "Код Услуги"
-        
-        if metric == "sum": 
-            breakdown = df_filtered.groupby(drill_col, observed=True)['Сумма'].sum().reset_index()
-            breakdown = breakdown.sort_values('Сумма', ascending=False)
-        else: 
-            breakdown = df_filtered.groupby(drill_col, observed=True).size().reset_index(name='val')
-            breakdown = breakdown.sort_values('val', ascending=False)
-        
-        top_n = breakdown.head(10)
-        
-        if metric == 'sum':
-            x_data = top_n['Сумма']
-            text_template = '%{x:,.2f} ₽'
+            drill_label = "МЭС"
+        elif group_by_col == "Код Услуги":
+            drill_col = "Наименование отделения"
+            drill_label = "отделение"
         else:
-            x_data = top_n['val']
-            text_template = '%{x:,.0f}'
+            drill_col = "Наименование отделения"
+            drill_label = "отделение"
+
+        if metric == "sum": 
+            total_val = df_filtered['Сумма'].sum()
+            fmt_val = f"{total_val:,.2f} ₽".replace(',', ' ').replace('.', ',')
+            breakdown = df_filtered.groupby(drill_col, observed=True)['Сумма'].sum().reset_index()
+            val_col = 'Сумма'
+            suffix = " ₽"
+        elif metric == "count_patients":
+            total_val = df_filtered['ИД пациента в версии счета'].nunique()
+            fmt_val = f"{total_val} чел."
+            breakdown = df_filtered.groupby(drill_col, observed=True)['ИД пациента в версии счета'].nunique().reset_index(name='val')
+            val_col = 'val'
+            suffix = " чел."
+        else: 
+            total_val = len(df_filtered)
+            fmt_val = f"{total_val} ед."
+            breakdown = df_filtered.groupby(drill_col, observed=True).size().reset_index(name='val')
+            val_col = 'val'
+            suffix = " ед."
+
+        top_n = breakdown.sort_values(val_col, ascending=False).head(10)
+        leader_name = top_n.iloc[0][drill_col] if not top_n.empty else "Н/Д"
+        leader_val = top_n.iloc[0][val_col] if not top_n.empty else 0
+        fmt_leader_val = f"{leader_val:,.2f}".replace(',', ' ').replace('.', ',') if metric == 'sum' else f"{leader_val}"
+
+        summary_text = html.Div([
+            html.Span("В выбранный период по объекту "),
+            html.B(f"«{clicked_group}»", style={"color": "var(--primary)"}),
+            html.Span(" зафиксировано "),
+            html.B(fmt_val),
+            html.Span(f". Из них основной объем (Топ-1) приходится на {drill_label} "),
+            html.B(f"«{leader_name}»"),
+            html.Span(f", что составляет "),
+            html.B(f"{fmt_leader_val}{suffix}"),
+            html.Span(".")
+        ], style={
+            "backgroundColor": "var(--bg-color)",
+            "padding": "15px 20px",
+            "borderRadius": "12px",
+            "fontSize": "15px",
+            "lineHeight": "1.6",
+            "color": "var(--text-main)",
+            "marginBottom": "25px",
+            "borderLeft": "5px solid var(--primary)"
+        })
+
+        top_n_plot = top_n.sort_values(val_col, ascending=True)
+
+        # Умная обрезка длинных названий для оси Y
+        def shorten_label(label, max_len=40):
+            s = str(label)
+            return s if len(s) <= max_len else s[:37] + "..."
             
+        short_labels = top_n_plot[drill_col].apply(shorten_label)
+
+        if metric == 'sum':
+            text_template = '%{x:,.2f} ₽'
+            ht_template = "<b>%{customdata}</b><br>Значение: %{x:,.2f} ₽<extra></extra>"
+        else:
+            text_template = '%{x:,.0f}'
+            ht_template = "<b>%{customdata}</b><br>Значение: %{x:,.0f}<extra></extra>"
+
         fig_modal = go.Figure(go.Bar(
-            x=x_data, 
-            y=top_n[drill_col], 
+            x=top_n_plot[val_col], 
+            y=short_labels,
+            customdata=top_n_plot[drill_col],
             orientation='h', 
             marker_color="var(--primary)", 
             texttemplate=text_template, 
-            textposition='outside'
+            textposition='outside',
+            cliponaxis=False,
+            hovertemplate=ht_template
         ))
+
+        max_x_val = top_n_plot[val_col].max() if not top_n_plot.empty else 0
+        x_max_range = max_x_val * 1.15 if max_x_val > 0 else 10
         
         fig_modal.update_layout(
-            margin=dict(l=10, r=40, t=10, b=10), 
-            yaxis=dict(autorange="reversed"), 
+            margin=dict(r=20, t=10, b=10),
             plot_bgcolor="rgba(0,0,0,0)", 
             paper_bgcolor="rgba(0,0,0,0)", 
-            xaxis=dict(showgrid=True, gridcolor="var(--grid-color)")
+            xaxis=dict(
+                showgrid=True, 
+                gridcolor="var(--grid-color)", 
+                range=[0, x_max_range]
+            ),
+            yaxis=dict(
+                type='category', 
+                automargin=True
+            )
         )
         
-        modal_title = f"Детализация: {clicked_group} ({date_str})"
+        modal_title = f"Детальный анализ: {clicked_group}"
         modal_body = html.Div([
-            html.P(f"Топ-10 по разрезу: {drill_col}", style={"color": "var(--text-muted)", "fontWeight": "600"}), 
-            dcc.Graph(figure=fig_modal, config={'displayModeBar': False}, style={"height": "350px"})
+            summary_text,
+            html.P(f"Распределение по разрезу «{drill_label}»:", style={"fontWeight": "700", "fontSize": "14px", "marginBottom": "10px"}),
+            dcc.Graph(figure=fig_modal, config={'displayModeBar': False}, style={"height": "380px"})
         ])
         
         return True, modal_title, modal_body
