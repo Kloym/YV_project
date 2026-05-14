@@ -1591,11 +1591,9 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
 
     total_sum = f"{filtered_df['Сумма'].sum():,.2f} ₽".replace(
         ",", " ").replace(".", ",") if 'Сумма' in filtered_df.columns else "0 ₽"
-    total_patients = f"{
-        filtered_df['ИД пациента в версии счета'].nunique()}" if 'ИД пациента в версии счета' in filtered_df.columns else "0"
+    total_patients = f"{filtered_df['ИД пациента в версии счета'].nunique()}" if 'ИД пациента в версии счета' in filtered_df.columns else "0"
     total_mes = f"{len(filtered_df)}"
-    active_depts = f"{
-        filtered_df['Наименование отделения'].nunique()}" if 'Наименование отделения' in filtered_df.columns else "0"
+    active_depts = f"{filtered_df['Наименование отделения'].nunique()}" if 'Наименование отделения' in filtered_df.columns else "0"
 
     fig = go.Figure()
     x_range, tickvals, ticktext = None, [], []
@@ -1622,24 +1620,24 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
                     'Сумма'].sum().reset_index()
                 metric_name = "Сумма"
 
-                def fmt(x): return f"{
-                    x:,.2f} ₽".replace(
-                    ',', ' ').replace(
-                    '.', ',')
+                def fmt(x): 
+                    return f"{x:,.2f} ₽".replace(',', ' ').replace('.', ',')
             elif metric == "count_patients":
                 trend_df = filtered_df.groupby(
                     'YearMonth',
                     observed=True)['ИД пациента в версии счета'].nunique().reset_index(
                     name='val')
                 metric_name = "Уникальные пациенты"
-                def fmt(x): return f"{x:,.0f} чел.".replace(',', ' ')
+                def fmt(x): 
+                    return f"{x:,.0f} чел.".replace(',', ' ')
             else:
                 trend_df = filtered_df.groupby(
                     'YearMonth',
                     observed=True).size().reset_index(
                     name='val')
                 metric_name = "Количество услуг (МЭС)"
-                def fmt(x): return f"{x:,.0f} ед.".replace(',', ' ')
+                def fmt(x): 
+                    return f"{x:,.0f} ед.".replace(',', ' ')
 
             trend_df = trend_df.sort_values('YearMonth')
 
@@ -1672,13 +1670,10 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
                             "#E11D48", "↓", "") if diff_mom < 0 else (
                             "var(--text-muted)", "=", "")
                         diff_str = f"{abs(diff_mom):,.0f}".replace(',', ' ')
-                        mom_element = html.Span(
-                            [
-                                html.Span(
-                                    f" {m_icon} ", style={
-                                        "margin": "0 4px"}), f"{m_sign}{diff_str} ({m_sign}{
-                                    perc_mom:.1f}%)"], style={
-                                "color": m_color, "fontSize": "12px", "fontWeight": "700"})
+                        mom_element = html.Span([
+                            html.Span(f" {m_icon} ", style={"margin": "0 4px"}), 
+                            f"{m_sign}{diff_str} ({m_sign}{perc_mom:.1f}%)"
+                        ], style={"color": m_color, "fontSize": "12px", "fontWeight": "700"})
 
                     badge = html.Div([html.Span(f"{m_name} {y_val}: ",
                                                 style={"color": "var(--text-muted)",
@@ -1710,9 +1705,7 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
                     diff_block = html.Div(
                         [
                             html.Span(
-                                f"Показатель «{metric_name}» {verb} с {
-                                    fmt(first_val)} до {
-                                    fmt(last_val)}. Разница: ",
+                                f"Показатель «{metric_name}» {verb} с {fmt(first_val)} до {fmt(last_val)}. Разница: ",
                                 style={
                                     "color": "var(--text-main)"}),
                             html.Span(
@@ -1721,9 +1714,7 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
                                         className=icon,
                                         style={
                                             "marginRight": "6px"}),
-                                    f"{sign}{
-                                        fmt(diff)} ({sign}{
-                                        perc:.1f}%)"],
+                                    f"{sign}{fmt(diff)} ({sign}{perc:.1f}%)"],
                                 style={
                                     "color": color,
                                     "fontWeight": "700",
@@ -1766,9 +1757,7 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
                                             "marginTop": "5px"})])
     except Exception as e:
         insight_html = html.Div(
-            f"Ошибка Сводки: {
-                str(e)}", style={
-                "color": "#E11D48"})
+            f"Ошибка Сводки: {str(e)}", style={"color": "#E11D48"})
 
     # --- 3. ГЛАВНЫЙ ГРАФИК ЛИНИЙ (Только ТОП-5) ---
     if not filtered_df.empty and 'dt' in filtered_df.columns and group_by_col in filtered_df.columns:
@@ -1814,10 +1803,7 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
             if metric == "sum":
                 ht = f"<b>Дата:</b> %{{x}}<br><b>{hover_title}:</b> {full_name}<br><b>Сумма:</b> %{{y:,.2f}} ₽<extra></extra>"
                 text_vals = g_data[y_col].apply(
-                    lambda x: f"{
-                        x /
-                        1000:,.0f}k" if x >= 10000 else f"{
-                        x:,.0f}")
+                    lambda x: f"{x / 1000:,.0f}k" if x >= 10000 else f"{x:,.0f}")
             elif metric == "count_patients":
                 ht = f"<b>Дата:</b> %{{x}}<br><b>{hover_title}:</b> {full_name}<br><b>Пациентов:</b> %{{y:,.0f}} чел.<extra></extra>"
                 text_vals = g_data[y_col].apply(lambda x: f"{x:,.0f}")
@@ -2026,12 +2012,11 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
                 col_def = {
                     "field": col,
                     "sortable": True,
-                    "enableRowGroup": True,  # Разрешаем перетаскивать для группировки
-                    "enablePivot": True,    # Разрешаем пивоты
+                    "enableRowGroup": True,
+                    "enablePivot": True,
                 }
                 if col in ['Кол_во_услуг', 'Сумма']:
                     col_def["filter"] = "agNumberColumnFilter"
-                    # Разрешаем агрегации (сумма, среднее и тд)
                     col_def["enableValue"] = True
                     if col == 'Сумма':
                         # По умолчанию суммы складываем
@@ -2051,7 +2036,7 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
                     "floatingFilter": True},
                 className=grid_theme,
                 enableEnterpriseModules=True,
-                # ИСПРАВЛЕНИЕ: Включили боковую панель и панель группировок
+
                 dashGridOptions={
                     "localeText": AG_GRID_LOCALE_RU,
                     "pagination": True,
@@ -2122,31 +2107,19 @@ def toggle_patient_modal(patient_id, close_clicks, is_open, theme):
         else:
             period_str = "Н/Д"
 
-        formatted_total = f"{
-            total_spent:,.2f} ₽".replace(
-            ',', ' ').replace(
-            '.', ',')
+        formatted_total = f"{total_spent:,.2f} ₽".replace(',', ' ').replace('.', ',')
 
         history_items = []
         if 'dt' in pat_df.columns:
             pat_df = pat_df.sort_values('dt', ascending=False)
 
         for _, row in pat_df.iterrows():
-            date_label = f"{
-                MONTHS_RU.get(
-                    row['dt'].month, '')} {
-                row['dt'].year}" if pd.notnull(
-                row['dt']) else "Н/Д"
+            date_label = f"{MONTHS_RU.get(row['dt'].month, '')} { row['dt'].year}" if pd.notnull(row['dt']) else "Н/Д"
             dept = row.get('Наименование отделения', 'Н/Д')
             profile = row.get('Наименование профиля', 'Н/Д')
             mes = row.get('Код Услуги', 'Н/Д')
             summ = row.get('Сумма', 0)
-            formatted_summ = f"{
-                summ:,.2f} ₽".replace(
-                ',',
-                ' ').replace(
-                '.',
-                ',')
+            formatted_summ = f"{summ:,.2f} ₽".replace(',',' ').replace('.',',')
 
             item = html.Div([
                 html.Div([
@@ -2366,10 +2339,7 @@ def drilldown_modal(clickData, close_clicks, is_open, group_by_col, metric):
         top_n = breakdown.sort_values(val_col, ascending=False).head(10)
         leader_name = top_n.iloc[0][drill_col] if not top_n.empty else "Н/Д"
         leader_val = top_n.iloc[0][val_col] if not top_n.empty else 0
-        fmt_leader_val = f"{
-            leader_val:,.2f}".replace(
-            ',', ' ').replace(
-            '.', ',') if metric == 'sum' else f"{leader_val}"
+        fmt_leader_val = f"{leader_val:,.2f}".replace(',', ' ').replace('.', ',') if metric == 'sum' else f"{leader_val}"
 
         summary_text = html.Div([
             html.Span("В выбранный период по объекту "),
