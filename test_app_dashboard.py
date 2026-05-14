@@ -36,7 +36,10 @@ AG_GRID_LOCALE_RU = {
     "lessThanOrEqual": "Меньше или равно", "greaterThanOrEqual": "Больше или равно",
     "inRange": "В промежутке", "inRangeStart": "от", "inRangeEnd": "до",
     "contains": "Содержит", "notContains": "Не содержит", "startsWith": "Начинается с",
-    "endsWith": "Заканчивается на", "andCondition": "И", "orCondition": "ИЛИ"
+    "endsWith": "Заканчивается на", "andCondition": "И", "orCondition": "ИЛИ",
+    "columns": "Колонки", "filters": "Фильтры", "pivotMode": "Режим сводной таблицы",
+    "groups": "Группировка строк", "rowGroupColumnsEmptyMessage": "Перетащите колонки сюда для группировки",
+    "values": "Значения", "valueColumnsEmptyMessage": "Перетащите сюда для агрегации"
 }
 
 _CACHE = {
@@ -346,7 +349,7 @@ def create_kpi_card(title: str, id_value: str, icon_class: str,
                 ], width=4, className="ps-0")
             ], className="align-items-center")
         ])
-    ], style={"backgroundColor": "var(--card-bg)", "border": "none", "borderRadius": "24px", "boxShadow": "var(--shadow)", "transition": "all 0.3s"})
+    ], style={"backgroundColor": "var(--card-bg)", "border": "none", "borderRadius": "24px", "boxShadow": "var(--shadow)", "transition": "all 0.3s", "height": "100%"})
 
 
 # --- ВЕРСТКА ИНТЕРФЕЙСА ---
@@ -419,6 +422,7 @@ app.layout = html.Div([
                     "fontWeight": "600",
                     "marginBottom": "25px"}),
 
+            # Блок 1: Настройки Аналитики
             html.Div([
                 html.Label(
                     "1. Показатель (Что считаем?)",
@@ -457,6 +461,7 @@ app.layout = html.Div([
                              clearable=False),
             ], style={"marginBottom": "25px", "paddingBottom": "25px", "borderBottom": "2px dashed var(--grid-color)"}),
 
+            # Блок 2: Фильтры Данных
             html.Label(
                 "ФИЛЬТРЫ ДАННЫХ",
                 style={
@@ -530,6 +535,7 @@ app.layout = html.Div([
         ]
     ),
 
+    # ПРАВАЯ ЧАСТЬ: КОНТЕНТ ДАШБОРДА
     html.Div(
         style={
             "marginLeft": "340px",
@@ -597,6 +603,7 @@ app.layout = html.Div([
                 ], style={"textAlign": "right", "display": "flex", "alignItems": "center", "justifyContent": "flex-end"}), width=6)
             ], style={"marginBottom": "30px", "marginTop": "10px"}),
 
+            # --- СИСТЕМА ВКЛАДОК ---
             dbc.Tabs(
                 id="main-tabs", active_tab="tab-main",
                 children=[
@@ -980,7 +987,7 @@ app.layout = html.Div([
                                                     style={
                                                         "color": "#01B574",
                                                         "marginRight": "12px"}),
-                                                "Сводная таблица"],
+                                                "Сводная таблица (Конструктор)"],
                                             style={
                                                 "fontWeight": "800",
                                                 "color": "var(--text-main)",
@@ -1020,7 +1027,7 @@ app.layout = html.Div([
                                         ], style={"display": "flex", "alignItems": "center"})
                                     ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "15px"}),
                                     html.P(
-                                        "Сырые агрегированные данные. Кликните на ячейку Тепловой карты, чтобы отфильтровать таблицу.",
+                                        "Откройте боковую панель «Колонки» справа, чтобы группировать данные и создавать собственные Pivot-отчеты.",
                                         style={
                                             "color": "var(--text-muted)",
                                             "marginBottom": "20px"}),
@@ -1108,6 +1115,7 @@ app.layout = html.Div([
         ]
     ),
 
+    # --- МОДАЛЬНОЕ ОКНО: ДЕТАЛИЗАЦИЯ ГРАФИКА ---
     dbc.Modal(
         [
             dbc.ModalHeader(
@@ -1134,6 +1142,8 @@ app.layout = html.Div([
         is_open=False,
         size="lg",
         centered=True),
+
+    # --- МОДАЛЬНОЕ ОКНО: SQL РЕДАКТОР ---
     dbc.Modal(
         [
             dbc.ModalHeader(
@@ -1295,7 +1305,37 @@ app.layout = html.Div([
         is_open=False,
         size="xl",
         centered=True,
-        backdrop="static")
+        backdrop="static"),
+
+    # --- НОВОЕ МОДАЛЬНОЕ ОКНО: КАРТОЧКА ПАЦИЕНТА ---
+    dbc.Modal(
+        [
+            dbc.ModalHeader(
+                dbc.ModalTitle(
+                    id="patient-modal-title",
+                    style={
+                        "fontWeight": "800",
+                        "color": "var(--primary)",
+                        "fontSize": "22px"})),
+            dbc.ModalBody(
+                id="patient-modal-body",
+                style={
+                    "padding": "30px",
+                    "backgroundColor": "var(--bg-color)"}),
+            dbc.ModalFooter(
+                dbc.Button(
+                    "Закрыть",
+                    id="close-patient-modal",
+                    className="ms-auto",
+                    style={
+                        "borderRadius": "12px",
+                        "backgroundColor": "var(--text-muted)",
+                        "border": "none",
+                        "padding": "8px 20px",
+                        "fontWeight": "600"}))
+        ],
+        id="patient-modal", is_open=False, size="xl", centered=True
+    )
 ])
 
 
@@ -1730,7 +1770,7 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
                 str(e)}", style={
                 "color": "#E11D48"})
 
-    # --- 3. ГЛАВНЫЙ ГРАФИК ЛИНИЙ (Только ТОП-5 для защиты от спагетти) ---
+    # --- 3. ГЛАВНЫЙ ГРАФИК ЛИНИЙ (Только ТОП-5) ---
     if not filtered_df.empty and 'dt' in filtered_df.columns and group_by_col in filtered_df.columns:
         labels_map = {
             "Наименование отделения": "Отделение",
@@ -1906,7 +1946,7 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
                 tickfont=dict(
                     size=11)))
 
-    # --- TREEMAP (ДЕРЕВО) ВМЕСТО SUNBURST ---
+    # --- TREEMAP (ДЕРЕВО) ---
     sunburst_fig = go.Figure()
     if not filtered_df.empty and set(
             ['Наименование отделения', 'Наименование профиля', 'Код Услуги']).issubset(filtered_df.columns):
@@ -1930,9 +1970,18 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
             sunburst_fig.update_traces(
                 hovertemplate='<b>%{label}</b><br>Количество: %{value} ед.')
 
+        sunburst_fig.update_traces(
+            pathbar=dict(
+                visible=True,
+                textfont=dict(
+                    size=15,
+                    family="Inter"),
+                edgeshape=">"),
+            root_color="#e9edf7", marker=dict(line=dict(width=1.5, color="#ffffff"))
+        )
         sunburst_fig.update_layout(
             margin=dict(
-                t=10,
+                t=45,
                 l=10,
                 r=10,
                 b=10),
@@ -1949,7 +1998,7 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
             '%Y-%m') == clicked_month) & (grid_data['Наименование отделения'] == clicked_dept)]
         cf_msg = f"🔍 Отфильтровано по: {clicked_dept} ({clicked_month})"
 
-    # --- 5. AG GRID ТАБЛИЦА ---
+    # --- 5. AG GRID ТАБЛИЦА (КОНСТРУКТОР PIVOT) ---
     ag_grid = html.Div("Нет данных для таблицы")
     if not grid_data.empty:
         agg_cols = [
@@ -1972,10 +2021,25 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
                     Кол_во_услуг=(
                         'Период', 'count')).reset_index()
 
-            column_defs = [{"field": col,
-                            "filter": "agNumberColumnFilter" if col in ['Кол_во_услуг',
-                                                                        'Сумма'] else "agSetColumnFilter",
-                            "sortable": True} for col in grid_df.columns]
+            column_defs = []
+            for col in grid_df.columns:
+                col_def = {
+                    "field": col,
+                    "sortable": True,
+                    "enableRowGroup": True,  # Разрешаем перетаскивать для группировки
+                    "enablePivot": True,    # Разрешаем пивоты
+                }
+                if col in ['Кол_во_услуг', 'Сумма']:
+                    col_def["filter"] = "agNumberColumnFilter"
+                    # Разрешаем агрегации (сумма, среднее и тд)
+                    col_def["enableValue"] = True
+                    if col == 'Сумма':
+                        # По умолчанию суммы складываем
+                        col_def["aggFunc"] = "sum"
+                else:
+                    col_def["filter"] = "agSetColumnFilter"
+                column_defs.append(col_def)
+
             grid_theme = "ag-theme-alpine" if theme == "light" else "ag-theme-alpine-dark"
             ag_grid = dag.AgGrid(
                 id="interactive-grid",
@@ -1987,21 +2051,236 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
                     "floatingFilter": True},
                 className=grid_theme,
                 enableEnterpriseModules=True,
+                # ИСПРАВЛЕНИЕ: Включили боковую панель и панель группировок
                 dashGridOptions={
                     "localeText": AG_GRID_LOCALE_RU,
                     "pagination": True,
-                    "paginationPageSize": 15},
+                    "paginationPageSize": 15,
+                    "rowGroupPanelShow": "always",
+                    "sideBar": True
+                },
                 csvExportParams={
                     "fileName": "Clinical_Table_Export.csv",
                     "columnSeparator": ";"},
                 style={
-                    "height": "600px",
+                    "height": "650px",
                     "width": "100%",
                     "borderRadius": "12px",
-                    "overflow": "hidden"})
+                    "overflow": "hidden"}
+            )
 
-    # ВОТ ЗДЕСЬ ВОЗВРАЩАЮТСЯ ИДЕАЛЬНЫЕ 11 ПЕРЕМЕННЫХ
     return fig, "Аналитика по времени", total_sum, total_patients, total_mes, active_depts, insight_html, heatmap_fig, ag_grid, sunburst_fig, cf_msg
+
+
+# --- НОВЫЙ КОЛЛБЭК: КАРТОЧКА ПАЦИЕНТА ---
+@app.callback(
+    [
+        Output("patient-modal", "is_open"),
+        Output("patient-modal-title", "children"),
+        Output("patient-modal-body", "children")
+    ],
+    [
+        Input("f-patient", "value"),
+        Input("close-patient-modal", "n_clicks")
+    ],
+    [State("patient-modal", "is_open"), State("theme-store", "data")],
+    prevent_initial_call=True
+)
+def toggle_patient_modal(patient_id, close_clicks, is_open, theme):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return is_open, dash.no_update, dash.no_update
+
+    trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    if trigger_id == "close-patient-modal":
+        return False, dash.no_update, dash.no_update
+
+    if trigger_id == "f-patient" and patient_id and str(
+            patient_id).strip() != "":
+        df = get_optimized_data()
+        if df.empty or 'Номер ИБ' not in df.columns:
+            return is_open, dash.no_update, dash.no_update
+
+        pat_df = df[df['Номер ИБ'].astype(str).str.contains(
+            str(patient_id), case=False)].copy()
+
+        if pat_df.empty:
+            return is_open, dash.no_update, dash.no_update
+
+        total_spent = pat_df['Сумма'].sum() if 'Сумма' in pat_df.columns else 0
+        total_visits = len(pat_df)
+        depts_visited = pat_df['Наименование отделения'].nunique(
+        ) if 'Наименование отделения' in pat_df.columns else 0
+
+        if 'dt' in pat_df.columns and not pat_df['dt'].isnull().all():
+            min_dt = pat_df['dt'].min()
+            max_dt = pat_df['dt'].max()
+            first_date = f"{MONTHS_RU.get(min_dt.month, '')} {min_dt.year}"
+            last_date = f"{MONTHS_RU.get(max_dt.month, '')} {max_dt.year}"
+            period_str = first_date if first_date == last_date else f"{first_date} - {last_date}"
+        else:
+            period_str = "Н/Д"
+
+        formatted_total = f"{
+            total_spent:,.2f} ₽".replace(
+            ',', ' ').replace(
+            '.', ',')
+
+        history_items = []
+        if 'dt' in pat_df.columns:
+            pat_df = pat_df.sort_values('dt', ascending=False)
+
+        for _, row in pat_df.iterrows():
+            date_label = f"{
+                MONTHS_RU.get(
+                    row['dt'].month, '')} {
+                row['dt'].year}" if pd.notnull(
+                row['dt']) else "Н/Д"
+            dept = row.get('Наименование отделения', 'Н/Д')
+            profile = row.get('Наименование профиля', 'Н/Д')
+            mes = row.get('Код Услуги', 'Н/Д')
+            summ = row.get('Сумма', 0)
+            formatted_summ = f"{
+                summ:,.2f} ₽".replace(
+                ',',
+                ' ').replace(
+                '.',
+                ',')
+
+            item = html.Div([
+                html.Div([
+                    html.Div(
+                        html.I(
+                            className="fas fa-check-circle",
+                            style={
+                                "color": "var(--primary)"}),
+                        style={
+                            "marginRight": "15px",
+                            "fontSize": "20px"}),
+                    html.Div([
+                        html.H6(
+                            f"Код МЭС: {mes}",
+                            style={
+                                "fontWeight": "700",
+                                "color": "var(--text-main)",
+                                "margin": "0 0 5px 0"}),
+                        html.Div([
+                            html.Span(
+                                [
+                                    html.I(
+                                        className="fas fa-calendar-day",
+                                        style={
+                                            "marginRight": "6px"}),
+                                    date_label],
+                                style={
+                                    "marginRight": "15px",
+                                    "fontSize": "12px",
+                                    "fontWeight": "600"}),
+                            html.Span(
+                                [
+                                    html.I(
+                                        className="fas fa-hospital",
+                                        style={
+                                            "marginRight": "6px"}),
+                                    dept],
+                                style={
+                                    "marginRight": "15px",
+                                    "fontSize": "12px",
+                                    "fontWeight": "600"}),
+                        ], style={"display": "flex", "color": "var(--text-muted)"}),
+                    ], style={"flex": 1}),
+                    html.Div(
+                        formatted_summ,
+                        style={
+                            "fontWeight": "700",
+                            "color": "var(--text-main)"})
+                ], style={"display": "flex", "alignItems": "center"})
+            ], style={"padding": "15px", "borderBottom": "1px solid var(--grid-color)"})
+            history_items.append(item)
+
+        modal_body = html.Div([
+            dbc.Row([
+                dbc.Col(
+                    create_kpi_card(
+                        "ОБЩИЙ ЧЕК",
+                        formatted_total,
+                        "fas fa-money-bill",
+                        "#01B574",
+                        "rgba(1,181,116,0.1)"),
+                    width=3),
+                dbc.Col(
+                    create_kpi_card(
+                        "УСЛУГ ОКАЗАНО",
+                        f"{total_visits}",
+                        "fas fa-stethoscope",
+                        "#4318FF",
+                        "rgba(67,24,255,0.1)"),
+                    width=3),
+                dbc.Col(
+                    create_kpi_card(
+                        "ОТДЕЛЕНИЙ",
+                        f"{depts_visited}",
+                        "fas fa-hospital",
+                        "#FF7D00",
+                        "rgba(255,125,0,0.1)"),
+                    width=3),
+                dbc.Col(
+                    create_kpi_card(
+                        "ПЕРИОД",
+                        period_str,
+                        "fas fa-calendar-alt",
+                        "#39B8FF",
+                        "rgba(57,184,255,0.1)"),
+                    width=3),
+            ], style={"marginBottom": "30px"}),
+
+            html.Div([
+                html.H4([html.I(className="fas fa-list-ul",
+                                style={"marginRight": "12px",
+                                       "color": "var(--primary)"}),
+                         "Детализация истории"],
+                        style={"fontWeight": "800",
+                               "marginBottom": "20px"}),
+
+                html.Div(
+                    history_items,
+                    style={
+                        "maxHeight": "400px",
+                        "overflowY": "auto",
+                        "border": "1px solid var(--grid-color)",
+                        "borderRadius": "12px"}),
+
+                html.Div([
+                    html.Span(
+                        "ИТОГО ЗАРАБОТАНО ПО ИБ:",
+                        style={
+                            "fontWeight": "800",
+                            "fontSize": "14px",
+                            "color": "var(--text-muted)",
+                            "letterSpacing": "1px"}),
+                    html.Span(
+                        formatted_total,
+                        style={
+                            "fontWeight": "900",
+                            "fontSize": "22px",
+                            "color": "#01B574",
+                            "marginLeft": "auto"})
+                ], style={
+                    "display": "flex",
+                    "alignItems": "center",
+                    "padding": "20px 25px",
+                    "marginTop": "20px",
+                    "backgroundColor": "rgba(1, 181, 116, 0.05)",
+                    "borderRadius": "16px",
+                    "border": "2px solid #01B574"
+                })
+            ], style={"backgroundColor": "var(--card-bg)", "padding": "30px", "borderRadius": "24px", "boxShadow": "var(--shadow)"})
+        ])
+
+        return True, f"Карточка истории болезни: {patient_id}", modal_body
+
+    return is_open, dash.no_update, dash.no_update
 
 
 @app.callback(
