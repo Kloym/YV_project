@@ -229,6 +229,8 @@ def get_optimized_data() -> pd.DataFrame:
 
     if df.empty: return df
 
+    df.columns = df.columns.str.replace(r'\n|\r', ' ', regex=True).str.replace(r'\s+', ' ', regex=True).str.strip()
+
     if 'Период' in df.columns:
         df['dt'] = pd.to_datetime(df['Период'], errors='coerce')
         df = df.dropna(subset=['dt'])
@@ -237,6 +239,12 @@ def get_optimized_data() -> pd.DataFrame:
         df['Month_Name'] = df['Month_Num'].map(MONTHS_RU)
         df['Quarter_Num'] = df['dt'].dt.quarter.astype(int)
         df['Quarter_Name'] = df['Quarter_Num'].map(QUARTERS_RU)
+        
+        df['YearMonth'] = df['dt'].dt.to_period('M')
+        df['Month_Str'] = df['dt'].dt.strftime('%Y-%m')
+
+    if 'Сумма' in df.columns and df['Сумма'].dtype == object:
+        df['Сумма'] = pd.to_numeric(df['Сумма'].astype(str).str.replace(',', '.').str.replace(' ', ''), errors='coerce').fillna(0)
 
     _CACHE["data"] = df
     _CACHE["last_modified"] = current_mtime
@@ -1602,7 +1610,7 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
     # --- 2. РАСЧЕТ СВОДКИ ---
     try:
         if not filtered_df.empty and 'dt' in filtered_df.columns:
-            filtered_df['YearMonth'] = filtered_df['dt'].dt.to_period('M')
+            # filtered_df['YearMonth'] = filtered_df['dt'].dt.to_period('M')
             if metric == "sum":
                 trend_df = filtered_df.groupby('YearMonth', observed=True)[
                     'Сумма'].sum().reset_index()
@@ -1871,7 +1879,7 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
     # --- 4. ТЕПЛОВАЯ КАРТА ---
     heatmap_fig = go.Figure()
     if not filtered_df.empty and 'dt' in filtered_df.columns and 'Наименование отделения' in filtered_df.columns:
-        filtered_df['Month_Str'] = filtered_df['dt'].dt.strftime('%Y-%m')
+        # filtered_df['Month_Str'] = filtered_df['dt'].dt.strftime('%Y-%m')
         if metric == "sum":
             pivot = filtered_df.pivot_table(
                 index='Наименование отделения',
@@ -1923,10 +1931,8 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
     # --- TREEMAP (ДЕРЕВО) ---
     sunburst_fig = go.Figure()
     if not filtered_df.empty and set(['Наименование отделения', 'Наименование профиля', 'Код Услуги']).issubset(filtered_df.columns):
-        df_sun = filtered_df.groupby(
-            ['Наименование отделения', 'Наименование профиля', 'Код Услуги'], observed=True
-        ).agg({'Сумма': 'sum', 'Период': 'count'}).reset_index()
-        
+
+        df_sun = filtered_df.groupby(['Наименование отделения', 'Наименование профиля', 'Код Услуги'], observed=True).agg({'Сумма': 'sum', 'Период': 'count'}).reset_index()
         df_sun.rename(columns={'Период': 'count_val'}, inplace=True)
         df_sun = df_sun.fillna("Неизвестно")
         
@@ -1944,6 +1950,7 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
             sunburst_fig.update_traces(hovertemplate='<b>%{label}</b><br>Количество: %{value} ед.')
             
         sunburst_fig.update_traces(
+            maxdepth=2,
             pathbar=dict(visible=True, textfont=dict(size=15, family="Inter"), edgeshape=">"),
             root_color="#e9edf7", marker=dict(line=dict(width=1.5, color="#ffffff"))
         )
