@@ -78,8 +78,8 @@ def process_excel_files(file_paths: Tuple[str, ...]) -> Tuple[int, int]:
                     logger.warning(f"Файл {file_name} пуст или не содержит полезных данных. Пропуск.")
                     continue
 
-                if 'Период' not in df_cleaned.columns or 'Наименование отделения' not in df_cleaned.columns:
-                    logger.error(f"В файле {file_name} отсутствуют колонки 'Период' или 'Отделение'. Файл пропущен.")
+                if 'Период' not in df_cleaned.columns or 'Наименование отделения' not in df_cleaned.columns or 'Наименование профиля' not in df_cleaned.columns:
+                    logger.error(f"В файле {file_name} отсутствуют ключевые колонки (Период, Отделение или Профиль). Файл пропущен.")
                     continue
 
                 cursor.execute("BEGIN TRANSACTION")
@@ -88,8 +88,7 @@ def process_excel_files(file_paths: Tuple[str, ...]) -> Tuple[int, int]:
                 table_exists = cursor.fetchone()[0] == 1
 
                 if table_exists:
-
-                    unique_groups = df_cleaned[['Период', 'Наименование отделения']].dropna().drop_duplicates()
+                    unique_groups = df_cleaned[['Период', 'Наименование отделения', 'Наименование профиля']].dropna().drop_duplicates()
                     
                     changes_log = []
                     deleted_total = 0
@@ -97,23 +96,25 @@ def process_excel_files(file_paths: Tuple[str, ...]) -> Tuple[int, int]:
                     for _, row in unique_groups.iterrows():
                         period = str(row['Период']).strip()
                         dept = str(row['Наименование отделения']).strip()
+                        profile = str(row['Наименование профиля']).strip()
                         
-                        if not period or not dept:
+                        if not period or not dept or not profile:
                             continue 
+
                         cursor.execute(
-                            f'DELETE FROM {TABLE_NAME} WHERE "Период" = ? AND "Наименование отделения" = ?',
-                            (period, dept)
+                            f'DELETE FROM {TABLE_NAME} WHERE "Период" = ? AND "Наименование отделения" = ? AND "Наименование профиля" = ?',
+                            (period, dept, profile)
                         )
                         
                         deleted_rows = cursor.rowcount
                         if deleted_rows > 0:
                             deleted_total += deleted_rows
-                            changes_log.append(f"[{period} | {dept}] удалено старых строк: {deleted_rows}")
+                            changes_log.append(f"[{period} | {dept} | {profile}] удалено старых строк: {deleted_rows}")
 
                     if changes_log:
                         logger.info(f"Обнаружено перекрытие данных! Очищено {deleted_total} старых записей перед обновлением:")
                         for log_msg in changes_log:
-                            logger.info(f"  -> {log_msg}")
+                            logger.info(f"   -> {log_msg}")
 
                 df_cleaned.to_sql(TABLE_NAME, conn, if_exists='append', index=False, chunksize=10000)
 
