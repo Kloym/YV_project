@@ -218,8 +218,7 @@ app.index_string = '''
 
 
 def get_optimized_data() -> pd.DataFrame:
-    if not os.path.exists(DB_NAME):
-        return pd.DataFrame()
+    if not os.path.exists(DB_NAME): return pd.DataFrame()
     current_mtime = os.path.getmtime(DB_NAME)
     if not _CACHE["data"].empty and _CACHE["last_modified"] == current_mtime:
         return _CACHE["data"]
@@ -228,12 +227,7 @@ def get_optimized_data() -> pd.DataFrame:
     df = pd.read_sql("SELECT * FROM medical_data", conn)
     conn.close()
 
-    if df.empty:
-        return df
-
-    df.columns = df.columns.str.replace(
-        r'\n|\r', ' ', regex=True).str.replace(
-        r'\s+', ' ', regex=True).str.strip()
+    if df.empty: return df
 
     if 'Период' in df.columns:
         df['dt'] = pd.to_datetime(df['Период'], errors='coerce')
@@ -243,12 +237,6 @@ def get_optimized_data() -> pd.DataFrame:
         df['Month_Name'] = df['Month_Num'].map(MONTHS_RU)
         df['Quarter_Num'] = df['dt'].dt.quarter.astype(int)
         df['Quarter_Name'] = df['Quarter_Num'].map(QUARTERS_RU)
-
-    if 'Сумма' in df.columns and df['Сумма'].dtype == object:
-        df['Сумма'] = pd.to_numeric(
-            df['Сумма'].astype(str).str.replace(
-                ',', '.').str.replace(
-                ' ', ''), errors='coerce').fillna(0)
 
     _CACHE["data"] = df
     _CACHE["last_modified"] = current_mtime
@@ -1934,44 +1922,32 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
 
     # --- TREEMAP (ДЕРЕВО) ---
     sunburst_fig = go.Figure()
-    if not filtered_df.empty and set(
-            ['Наименование отделения', 'Наименование профиля', 'Код Услуги']).issubset(filtered_df.columns):
-        df_sun = filtered_df.fillna("Неизвестно").copy()
-
+    if not filtered_df.empty and set(['Наименование отделения', 'Наименование профиля', 'Код Услуги']).issubset(filtered_df.columns):
+        df_sun = filtered_df.groupby(
+            ['Наименование отделения', 'Наименование профиля', 'Код Услуги'], observed=True
+        ).agg({'Сумма': 'sum', 'Период': 'count'}).reset_index()
+        
+        df_sun.rename(columns={'Период': 'count_val'}, inplace=True)
+        df_sun = df_sun.fillna("Неизвестно")
+        
         if metric == "sum":
             sunburst_fig = px.treemap(
-                df_sun, path=['Наименование отделения',
-                              'Наименование профиля', 'Код Услуги'],
+                df_sun, path=['Наименование отделения', 'Наименование профиля', 'Код Услуги'],
                 values='Сумма', color='Сумма', color_continuous_scale='Blues'
             )
-            sunburst_fig.update_traces(
-                hovertemplate='<b>%{label}</b><br>Сумма: %{value:,.2f} ₽')
+            sunburst_fig.update_traces(hovertemplate='<b>%{label}</b><br>Сумма: %{value:,.2f} ₽')
         else:
-            df_sun['count_val'] = 1
             sunburst_fig = px.treemap(
-                df_sun, path=['Наименование отделения',
-                              'Наименование профиля', 'Код Услуги'],
+                df_sun, path=['Наименование отделения', 'Наименование профиля', 'Код Услуги'],
                 values='count_val'
             )
-            sunburst_fig.update_traces(
-                hovertemplate='<b>%{label}</b><br>Количество: %{value} ед.')
-
+            sunburst_fig.update_traces(hovertemplate='<b>%{label}</b><br>Количество: %{value} ед.')
+            
         sunburst_fig.update_traces(
-            pathbar=dict(
-                visible=True,
-                textfont=dict(
-                    size=15,
-                    family="Inter"),
-                edgeshape=">"),
+            pathbar=dict(visible=True, textfont=dict(size=15, family="Inter"), edgeshape=">"),
             root_color="#e9edf7", marker=dict(line=dict(width=1.5, color="#ffffff"))
         )
-        sunburst_fig.update_layout(
-            margin=dict(
-                t=45,
-                l=10,
-                r=10,
-                b=10),
-            paper_bgcolor="rgba(0,0,0,0)")
+        sunburst_fig.update_layout(margin=dict(t=45, l=10, r=10, b=10), paper_bgcolor="rgba(0,0,0,0)")
 
     # --- КРОСС-ФИЛЬТРАЦИЯ ---
     cf_msg = ""
@@ -1987,19 +1963,12 @@ def update_standard_dashboard(years, quarters, months, depts, profiles,
     # --- 5. AG GRID ТАБЛИЦА (КОНСТРУКТОР PIVOT) ---
     ag_grid = html.Div("Нет данных для таблицы")
     if not grid_data.empty:
-        agg_cols = [
-            'Наименование отделения',
-            'Наименование профиля',
-            'Код Услуги',
-            'Номер ИБ']
+        agg_cols = ['Наименование отделения', 'Наименование профиля', 'Код Услуги']
         agg_cols = [c for c in agg_cols if c in grid_data.columns]
+        
         if agg_cols:
             if 'Сумма' in grid_data.columns:
-                grid_df = grid_data.groupby(
-                    agg_cols, observed=True).agg(
-                    Кол_во_услуг=(
-                        'Период', 'count'), Сумма=(
-                        'Сумма', 'sum')).reset_index()
+                grid_df = grid_data.groupby(agg_cols, observed=True).agg(Кол_во_услуг=('Период', 'count'), Сумма=('Сумма', 'sum')).reset_index()
                 grid_df['Сумма'] = grid_df['Сумма'].round(2)
             else:
                 grid_df = grid_data.groupby(
