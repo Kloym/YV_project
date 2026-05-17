@@ -1545,10 +1545,13 @@ def update_smart_filters(years, quarters, months, depts,
     [
         Input("f-year", "value"), Input("f-quarter", "value"), Input("f-month", "value"), Input("f-dept", "value"),
         Input("f-profile", "value"), Input("f-mes", "value"), Input("f-patient", "value"), Input("f-metric", "value"), 
-        Input("f-group-by", "value"), Input("theme-store", "data"), Input("f-yoy", "value")
+        Input("f-group-by", "value"), Input("theme-store", "data"), Input("f-yoy", "value"),
+        Input("main-tabs", "active_tab") 
     ]
 )
-def update_tab_1(years, quarters, months, depts, profiles, mes_list, patient, metric, group_by_col, theme, yoy_toggle):
+def update_tab_1(years, quarters, months, depts, profiles, mes_list, patient, metric, group_by_col, theme, yoy_toggle, active_tab):
+    if active_tab != "tab-main":
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
     df = get_optimized_data()
     if df.empty: 
         return go.Figure(), "Аналитика", "0 ₽", "0", "0", "0", html.Div("Нет данных")
@@ -1616,10 +1619,13 @@ def update_tab_1(years, quarters, months, depts, profiles, mes_list, patient, me
     [
         Input("f-year", "value"), Input("f-quarter", "value"), Input("f-month", "value"), Input("f-dept", "value"),
         Input("f-profile", "value"), Input("f-mes", "value"), Input("f-patient", "value"), Input("f-metric", "value"),
-        Input("theme-store", "data")
+        Input("theme-store", "data"),
+        Input("main-tabs", "active_tab")
     ]
 )
-def update_tab_2(years, quarters, months, depts, profiles, mes_list, patient, metric, theme):
+def update_tab_2(years, quarters, months, depts, profiles, mes_list, patient, metric, theme, active_tab):
+    if active_tab != "tab-beta":
+        return dash.no_update, dash.no_update
     df = get_optimized_data()
     if df.empty: return go.Figure(), go.Figure()
 
@@ -1670,10 +1676,13 @@ def update_tab_2(years, quarters, months, depts, profiles, mes_list, patient, me
     [
         Input("f-year", "value"), Input("f-quarter", "value"), Input("f-month", "value"), Input("f-dept", "value"),
         Input("f-profile", "value"), Input("f-mes", "value"), Input("f-patient", "value"), Input("heatmap-chart", "clickData"),
-        Input("theme-store", "data")
+        Input("theme-store", "data"),
+        Input("main-tabs", "active_tab")
     ]
 )
-def update_table_only(years, quarters, months, depts, profiles, mes_list, patient, heatmap_click, theme):
+def update_table_only(years, quarters, months, depts, profiles, mes_list, patient, heatmap_click, theme, active_tab):
+    if active_tab != "tab-beta":
+        return dash.no_update, dash.no_update
     df = get_optimized_data()
     if df.empty: return html.Div("Нет данных"), ""
 
@@ -2189,17 +2198,16 @@ def execute_custom_sql(n_clicks, query, theme):
 
 
 @app.callback(
-    [Output("abc-grid-container", "children"),
-     Output("download-abc-xlsx", "data")],
+    [Output("abc-grid-container", "children"), Output("download-abc-xlsx", "data")],
     [
-        Input("abc-group-by", "value"), Input("f-year",
-                                              "value"), Input("f-quarter", "value"), Input("f-month", "value"),
-        Input("f-dept", "value"), Input("f-profile", "value"), Input("f-mes",
-                                                                     "value"), Input("theme-store", "data"), Input("btn-export-abc", "n_clicks")
+        Input("abc-group-by", "value"), Input("f-year", "value"), Input("f-quarter", "value"), Input("f-month", "value"),
+        Input("f-dept", "value"), Input("f-profile", "value"), Input("f-mes", "value"), Input("theme-store", "data"), Input("btn-export-abc", "n_clicks"),
+        Input("main-tabs", "active_tab")
     ]
 )
-def update_abc_analysis(group_by, years, quarters, months,
-                        depts, profiles, mes_list, theme, export_clicks):
+def update_abc_analysis(group_by, years, quarters, months, depts, profiles, mes_list, theme, export_clicks, active_tab):
+    if active_tab != "tab-abc":
+        return dash.no_update, dash.no_update
     df = get_optimized_data()
     ctx = dash.callback_context
     triggered_id = ctx.triggered[0]['prop_id'].split(
