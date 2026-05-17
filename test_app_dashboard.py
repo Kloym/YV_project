@@ -1538,500 +1538,195 @@ def update_smart_filters(years, quarters, months, depts,
 
 @app.callback(
     [
-        Output("main-line-chart", "figure"), Output("main-chart-title",
-                                                    "children"), Output("kpi-sum", "children"),
-        Output("kpi-patients", "children"), Output("kpi-mes",
-                                                   "children"), Output("kpi-depts", "children"),
-        Output("smart-insights-container", "children"), Output("heatmap-chart",
-                                                               "figure"), Output("ag-grid-container", "children"),
-        Output("sunburst-chart", "figure"), Output("crossfilter-msg", "children")
+        Output("main-line-chart", "figure"), Output("main-chart-title", "children"), Output("kpi-sum", "children"),
+        Output("kpi-patients", "children"), Output("kpi-mes", "children"), Output("kpi-depts", "children"),
+        Output("smart-insights-container", "children")
     ],
     [
-        Input("f-year", "value"), Input("f-quarter",
-                                        "value"), Input("f-month", "value"), Input("f-dept", "value"),
-        Input("f-profile", "value"), Input("f-mes", "value"), Input("f-patient",
-                                                                    "value"), Input("f-metric", "value"), Input("f-group-by", "value"),
-        Input("theme-store", "data"), Input("f-yoy",
-                                            "value"), Input("heatmap-chart", "clickData")
+        Input("f-year", "value"), Input("f-quarter", "value"), Input("f-month", "value"), Input("f-dept", "value"),
+        Input("f-profile", "value"), Input("f-mes", "value"), Input("f-patient", "value"), Input("f-metric", "value"), 
+        Input("f-group-by", "value"), Input("theme-store", "data"), Input("f-yoy", "value")
     ]
 )
-def update_standard_dashboard(years, quarters, months, depts, profiles,
-                              mes_list, patient, metric, group_by_col, theme, yoy_toggle, heatmap_click):
+def update_tab_1(years, quarters, months, depts, profiles, mes_list, patient, metric, group_by_col, theme, yoy_toggle):
     df = get_optimized_data()
-    insight_html = html.Div(
-        "Загрузка данных...", style={
-            "color": "var(--text-muted)"})
-    empty_fig = go.Figure()
-    if df.empty:
-        return empty_fig, "Аналитика по времени", "0 ₽", "0", "0", "0", insight_html, empty_fig, html.Div(
-            "Нет данных"), empty_fig, ""
+    if df.empty: 
+        return go.Figure(), "Аналитика", "0 ₽", "0", "0", "0", html.Div("Нет данных")
 
     mask = pd.Series(True, index=df.index)
-    if years:
-        mask &= df['Year'].isin(years)
-    if quarters:
-        mask &= df['Quarter_Name'].isin(quarters)
-    if months:
-        mask &= df['Month_Name'].isin(months)
-    if depts:
-        mask &= df['Наименование отделения'].isin(depts)
-    if profiles:
-        mask &= df['Наименование профиля'].isin(profiles)
-    if mes_list:
-        mask &= df['Код Услуги'].isin(mes_list)
-    if patient and 'Номер ИБ' in df.columns:
-        mask &= df['Номер ИБ'].astype(
-            str).str.contains(str(patient), case=False)
+    if years: mask &= df['Year'].isin(years)
+    if quarters: mask &= df['Quarter_Name'].isin(quarters)
+    if months: mask &= df['Month_Name'].isin(months)
+    if depts: mask &= df['Наименование отделения'].isin(depts)
+    if profiles: mask &= df['Наименование профиля'].isin(profiles)
+    if mes_list: mask &= df['Код Услуги'].isin(mes_list)
+    if patient and 'Номер ИБ' in df.columns: mask &= df['Номер ИБ'].astype(str).str.contains(str(patient), case=False)
 
-    filtered_df = df[mask].copy()
-
-    total_sum = f"{filtered_df['Сумма'].sum():,.2f} ₽".replace(
-        ",", " ").replace(".", ",") if 'Сумма' in filtered_df.columns else "0 ₽"
+    filtered_df = df[mask] 
+    total_sum = f"{filtered_df['Сумма'].sum():,.2f} ₽".replace(",", " ").replace(".", ",") if 'Сумма' in filtered_df.columns else "0 ₽"
     total_patients = f"{filtered_df['ИД пациента в версии счета'].nunique()}" if 'ИД пациента в версии счета' in filtered_df.columns else "0"
     total_mes = f"{len(filtered_df)}"
     active_depts = f"{filtered_df['Наименование отделения'].nunique()}" if 'Наименование отделения' in filtered_df.columns else "0"
 
     fig = go.Figure()
     x_range, tickvals, ticktext = None, [], []
+    insight_html = html.Div()
 
     if not filtered_df.empty and 'dt' in filtered_df.columns:
-        x_range = [
-            filtered_df['dt'].min() -
-            pd.Timedelta(
-                days=3),
-            filtered_df['dt'].max() +
-            pd.Timedelta(
-                days=3)]
+        x_range = [filtered_df['dt'].min() - pd.Timedelta(days=3), filtered_df['dt'].max() + pd.Timedelta(days=3)]
         unique_dates = sorted(filtered_df['dt'].unique())
         tickvals = unique_dates
-        ticktext = [
-            f"{MONTHS_RU[pd.Timestamp(d).month]} {pd.Timestamp(d).year}" for d in unique_dates]
+        ticktext = [f"{MONTHS_RU[pd.Timestamp(d).month]} {pd.Timestamp(d).year}" for d in unique_dates]
 
-    # --- 2. РАСЧЕТ СВОДКИ ---
-    try:
-        if not filtered_df.empty and 'dt' in filtered_df.columns:
-            # filtered_df['YearMonth'] = filtered_df['dt'].dt.to_period('M')
+        if group_by_col in filtered_df.columns:
             if metric == "sum":
-                trend_df = filtered_df.groupby('YearMonth', observed=True)[
-                    'Сумма'].sum().reset_index()
-                metric_name = "Сумма"
-
-                def fmt(x): 
-                    return f"{x:,.2f} ₽".replace(',', ' ').replace('.', ',')
+                trend = filtered_df.groupby(['dt', group_by_col], observed=True)['Сумма'].sum().reset_index()
+                y_col = 'Сумма'
             elif metric == "count_patients":
-                trend_df = filtered_df.groupby(
-                    'YearMonth',
-                    observed=True)['ИД пациента в версии счета'].nunique().reset_index(
-                    name='val')
-                metric_name = "Уникальные пациенты"
-                def fmt(x): 
-                    return f"{x:,.0f} чел.".replace(',', ' ')
+                trend = filtered_df.groupby(['dt', group_by_col], observed=True)['ИД пациента в версии счета'].nunique().reset_index(name='val')
+                y_col = 'val'
             else:
-                trend_df = filtered_df.groupby(
-                    'YearMonth',
-                    observed=True).size().reset_index(
-                    name='val')
-                metric_name = "Количество услуг (МЭС)"
-                def fmt(x): 
-                    return f"{x:,.0f} ед.".replace(',', ' ')
+                trend = filtered_df.groupby(['dt', group_by_col], observed=True).size().reset_index(name='val')
+                y_col = 'val'
 
-            trend_df = trend_df.sort_values('YearMonth')
+            trend = trend.sort_values('dt')
+            top_groups = trend.groupby(group_by_col)[y_col].sum().nlargest(5).index.tolist()
 
-            if trend_df.empty:
-                insight_html = html.Div(
-                    [
-                        html.I(
-                            className="fas fa-exclamation-circle",
-                            style={
-                                "color": "#FF7D00",
-                                "marginRight": "12px"}),
-                        html.Span(
-                            "Данные отсутствуют.",
-                            style={
-                                "color": "var(--text-muted)"})])
-            else:
-                breakdown_badges = []
-                prev_val = None
-                for _, row in trend_df.iterrows():
-                    m_name = MONTHS_RU.get(row['YearMonth'].month, "")
-                    y_val = row['YearMonth'].year
-                    val = row['Сумма'] if metric == 'sum' else row['val']
-                    mom_element = ""
-                    if prev_val is not None:
-                        diff_mom = val - prev_val
-                        perc_mom = (
-                            diff_mom / prev_val * 100) if prev_val != 0 else 0
-                        m_color, m_icon, m_sign = (
-                            "#01B574", "↑", "+") if diff_mom > 0 else (
-                            "#E11D48", "↓", "") if diff_mom < 0 else (
-                            "var(--text-muted)", "=", "")
-                        diff_str = f"{abs(diff_mom):,.0f}".replace(',', ' ')
-                        mom_element = html.Span([
-                            html.Span(f" {m_icon} ", style={"margin": "0 4px"}), 
-                            f"{m_sign}{diff_str} ({m_sign}{perc_mom:.1f}%)"
-                        ], style={"color": m_color, "fontSize": "12px", "fontWeight": "700"})
+            colors = [{"hex": "#4318FF", "rgba": "rgba(67, 24, 255, 0.15)"}, {"hex": "#FF7D00", "rgba": "rgba(255, 125, 0, 0.15)"}, {"hex": "#01B574", "rgba": "rgba(1, 181, 116, 0.15)"}, {"hex": "#39B8FF", "rgba": "rgba(57, 184, 255, 0.15)"}, {"hex": "#E11D48", "rgba": "rgba(225, 29, 72, 0.15)"}]
 
-                    badge = html.Div([html.Span(f"{m_name} {y_val}: ",
-                                                style={"color": "var(--text-muted)",
-                                                       "marginRight": "4px"}),
-                                      html.Span(f"{fmt(val)}",
-                                                style={"color": "var(--text-main)"}),
-                                      mom_element],
-                                     style={"backgroundColor": "var(--card-bg)",
-                                            "border": "1px solid var(--grid-color)",
-                                            "borderRadius": "8px",
-                                            "padding": "6px 12px",
-                                            "margin": "4px",
-                                            "fontSize": "13px",
-                                            "fontWeight": "600",
-                                            "display": "inline-flex",
-                                            "alignItems": "center"})
-                    breakdown_badges.append(badge)
-                    prev_val = val
-
-                if len(trend_df) >= 2:
-                    first_val = trend_df.iloc[0]['Сумма'] if metric == 'sum' else trend_df.iloc[0]['val']
-                    last_val = trend_df.iloc[-1]['Сумма'] if metric == 'sum' else trend_df.iloc[-1]['val']
-                    diff = last_val - first_val
-                    perc = (diff / first_val) * 100 if first_val != 0 else 0
-                    verb, color, icon, sign = (
-                        "увеличился", "#01B574", "fas fa-arrow-trend-up", "+") if diff > 0 else (
-                        "снизился", "#E11D48", "fas fa-arrow-trend-down", "") if diff < 0 else (
-                        "не изменился", "var(--text-muted)", "fas fa-minus", "")
-                    diff_block = html.Div(
-                        [
-                            html.Span(
-                                f"Показатель «{metric_name}» {verb} с {fmt(first_val)} до {fmt(last_val)}. Разница: ",
-                                style={
-                                    "color": "var(--text-main)"}),
-                            html.Span(
-                                [
-                                    html.I(
-                                        className=icon,
-                                        style={
-                                            "marginRight": "6px"}),
-                                    f"{sign}{fmt(diff)} ({sign}{perc:.1f}%)"],
-                                style={
-                                    "color": color,
-                                    "fontWeight": "700",
-                                    "backgroundColor": f"{color}1A",
-                                    "padding": "4px 10px",
-                                    "borderRadius": "8px",
-                                                    "marginLeft": "6px"})],
-                        style={
-                            "marginBottom": "12px"})
-                else:
-                    diff_block = html.Div([html.Span("Выберите больше периодов для сравнения динамики.", style={
-                                          "color": "var(--text-muted)", "fontStyle": "italic"})], style={"marginBottom": "12px"})
-
-                insight_html = html.Div(
-                    [
-                        html.Div(
-                            [
-                                html.I(
-                                    className="fas fa-robot",
-                                    style={
-                                        "color": "var(--primary)",
-                                        "marginRight": "12px",
-                                        "fontSize": "20px"}),
-                                html.Span(
-                                    "Сводка:",
-                                    style={
-                                        "fontWeight": "800",
-                                        "color": "var(--primary)",
-                                        "marginRight": "8px"})],
-                            style={
-                                "display": "flex",
-                                "alignItems": "center",
-                                "marginBottom": "10px"}),
-                        diff_block,
-                        html.Div(
-                            breakdown_badges,
-                            style={
-                                "display": "flex",
-                                "flexWrap": "wrap",
-                                            "marginTop": "5px"})])
-    except Exception as e:
-        insight_html = html.Div(
-            f"Ошибка Сводки: {str(e)}", style={"color": "#E11D48"})
-
-    # --- 3. ГЛАВНЫЙ ГРАФИК ЛИНИЙ (Только ТОП-5) ---
-    if not filtered_df.empty and 'dt' in filtered_df.columns and group_by_col in filtered_df.columns:
-        labels_map = {
-            "Наименование отделения": "Отделение",
-            "Код Услуги": "Код МЭС",
-            "Наименование профиля": "Профиль"}
-        hover_title = labels_map.get(group_by_col, "Значение")
-
-        if metric == "sum":
-            trend = filtered_df.groupby(['dt', group_by_col], observed=True)[
-                'Сумма'].sum().reset_index()
-            y_col = 'Сумма'
-        elif metric == "count_patients":
-            trend = filtered_df.groupby(['dt', group_by_col], observed=True)[
-                'ИД пациента в версии счета'].nunique().reset_index(name='val')
-            y_col = 'val'
-        else:
-            trend = filtered_df.groupby(
-                ['dt', group_by_col], observed=True).size().reset_index(name='val')
-            y_col = 'val'
-
-        trend = trend.sort_values('dt')
-        top_groups = trend.groupby(group_by_col)[
-            y_col].sum().nlargest(5).index.tolist()
-
-        colors = [
-            {
-                "hex": "#4318FF", "rgba": "rgba(67, 24, 255, 0.15)"}, {
-                "hex": "#FF7D00", "rgba": "rgba(255, 125, 0, 0.15)"}, {
-                "hex": "#01B574", "rgba": "rgba(1, 181, 116, 0.15)"}, {
-                    "hex": "#39B8FF", "rgba": "rgba(57, 184, 255, 0.15)"}, {
-                        "hex": "#E11D48", "rgba": "rgba(225, 29, 72, 0.15)"}]
-
-        for i, group_val in enumerate(top_groups):
-            g_data = trend[trend[group_by_col] == group_val]
-            c = colors[i % len(colors)]
-            custom_data_formatted = [f"STD|{group_val}"] * len(g_data)
-            full_name = str(group_val)
-            short_name = full_name if len(
-                full_name) <= 35 else full_name[:32] + "..."
-
-            if metric == "sum":
-                ht = f"<b>Дата:</b> %{{x}}<br><b>{hover_title}:</b> {full_name}<br><b>Сумма:</b> %{{y:,.2f}} ₽<extra></extra>"
-                text_vals = g_data[y_col].apply(
-                    lambda x: f"{x / 1000:,.0f}k" if x >= 10000 else f"{x:,.0f}")
-            elif metric == "count_patients":
-                ht = f"<b>Дата:</b> %{{x}}<br><b>{hover_title}:</b> {full_name}<br><b>Пациентов:</b> %{{y:,.0f}} чел.<extra></extra>"
-                text_vals = g_data[y_col].apply(lambda x: f"{x:,.0f}")
-            else:
-                ht = f"<b>Дата:</b> %{{x}}<br><b>{hover_title}:</b> {full_name}<br><b>Оказано:</b> %{{y:,.0f}} ед.<extra></extra>"
-                text_vals = g_data[y_col].apply(lambda x: f"{x:,.0f}")
-
-            fig.add_trace(
-                go.Scatter(
-                    x=g_data['dt'],
-                    y=g_data[y_col],
-                    name=short_name,
-                    mode='lines+markers+text',
-                    text=text_vals,
-                    textposition="top center",
-                    textfont=dict(
-                        size=11,
-                        color=c["hex"],
-                        weight="bold"),
-                    line=dict(
-                        width=4,
-                        shape='spline',
-                        smoothing=1.3,
-                        color=c["hex"]),
-                    marker=dict(
-                        size=12,
-                        color=c["hex"]),
-                    fill='tozeroy',
-                    fillcolor=c["rgba"],
-                    hovertemplate=ht,
-                    customdata=custom_data_formatted))
-
-        if yoy_toggle and yoy_toggle[0]:
-            df_yoy = df.copy()
-            df_yoy['Year'] = df_yoy['Year'] + 1
-            mask_yoy = pd.Series(True, index=df_yoy.index)
-            if quarters:
-                mask_yoy &= df_yoy['Quarter_Name'].isin(quarters)
-            if depts:
-                mask_yoy &= df_yoy['Наименование отделения'].isin(depts)
-            if profiles:
-                mask_yoy &= df_yoy['Наименование профиля'].isin(profiles)
-            if mes_list:
-                mask_yoy &= df_yoy['Код Услуги'].isin(mes_list)
-            df_yoy = df_yoy[mask_yoy]
-
-            if not df_yoy.empty:
-                if metric == "sum":
-                    trend_yoy = df_yoy.groupby(['dt', group_by_col], observed=True)[
-                        'Сумма'].sum().reset_index()
-                else:
-                    trend_yoy = df_yoy.groupby(
-                        ['dt', group_by_col], observed=True).size().reset_index(name='val')
-
-                for i, group_val in enumerate(top_groups):
-                    g_data = trend_yoy[trend_yoy[group_by_col] == group_val]
-                    if not g_data.empty:
-                        c = colors[i % len(colors)]
-                        short_name = f"[Прошлый год] {str(group_val)[:20]}..."
-                        g_data['dt_shifted'] = g_data['dt'] + \
-                            pd.DateOffset(years=1)
-                        fig.add_trace(
-                            go.Scatter(
-                                x=g_data['dt_shifted'],
-                                y=g_data[y_col],
-                                name=short_name,
-                                mode='lines',
-                                line=dict(
-                                    width=2,
-                                    dash='dot',
-                                    color=c["hex"]),
-                                opacity=0.5))
+            for i, group_val in enumerate(top_groups):
+                g_data = trend[trend[group_by_col] == group_val]
+                c = colors[i % len(colors)]
+                fig.add_trace(go.Scatter(
+                    x=g_data['dt'], y=g_data[y_col], 
+                    name=str(group_val)[:32] + "...", mode='lines+markers',
+                    line=dict(width=4, shape='spline', smoothing=1.3, color=c["hex"]),
+                    marker=dict(size=12, color=c["hex"]), fill='tozeroy', fillcolor=c["rgba"]
+                ))
 
     fig = apply_beautiful_layout(fig, theme, x_range, tickvals, ticktext)
     fig.update_xaxes(rangeslider_visible=False)
 
-    # --- 4. ТЕПЛОВАЯ КАРТА ---
-    heatmap_fig = go.Figure()
-    if not filtered_df.empty and 'dt' in filtered_df.columns and 'Наименование отделения' in filtered_df.columns:
-        # filtered_df['Month_Str'] = filtered_df['dt'].dt.strftime('%Y-%m')
-        if metric == "sum":
-            pivot = filtered_df.pivot_table(
-                index='Наименование отделения',
-                columns='Month_Str',
-                values='Сумма',
-                aggfunc='sum',
-                fill_value=0)
-            hm_template = "<b>Месяц:</b> %{x}<br><b>Отделение:</b> %{y}<br><b>Сумма:</b> %{z:,.2f} ₽<extra></extra>"
-        elif metric == "count_patients":
-            pivot = filtered_df.pivot_table(
-                index='Наименование отделения',
-                columns='Month_Str',
-                values='ИД пациента в версии счета',
-                aggfunc=pd.Series.nunique,
-                fill_value=0)
-            hm_template = "<b>Месяц:</b> %{x}<br><b>Отделение:</b> %{y}<br><b>Пациентов:</b> %{z:,.0f} чел.<extra></extra>"
-        else:
-            pivot = filtered_df.pivot_table(
-                index='Наименование отделения',
-                columns='Month_Str',
-                values='Период',
-                aggfunc='count',
-                fill_value=0)
-            hm_template = "<b>Месяц:</b> %{x}<br><b>Отделение:</b> %{y}<br><b>Услуг:</b> %{z:,.0f} ед.<extra></extra>"
+    return fig, "Аналитика по времени", total_sum, total_patients, total_mes, active_depts, insight_html
 
-        colorscale = "Blues" if theme == "light" else "Viridis"
-        heatmap_fig.add_trace(
-            go.Heatmap(
-                z=pivot.values,
-                x=pivot.columns,
-                y=pivot.index,
-                colorscale=colorscale,
-                hovertemplate=hm_template))
-        heatmap_fig = apply_beautiful_layout(heatmap_fig, theme)
-        num_departments = len(pivot.index)
-        heatmap_fig.update_layout(
-            height=max(
-                400,
-                (num_departments * 35) + 150),
-            xaxis=dict(
-                showgrid=False,
-                type='category'),
-            yaxis=dict(
-                showgrid=False,
-                automargin=True,
-                tickfont=dict(
-                    size=11)))
+# 🚀 2. КОЛЛБЭК ДЛЯ ВТОРОЙ ВКЛАДКИ
 
-    # --- TREEMAP (ДЕРЕВО) ---
-    sunburst_fig = go.Figure()
-    if not filtered_df.empty and set(['Наименование отделения', 'Наименование профиля', 'Код Услуги']).issubset(filtered_df.columns):
+@app.callback(
+    [Output("sunburst-chart", "figure"), Output("heatmap-chart", "figure")],
+    [
+        Input("f-year", "value"), Input("f-quarter", "value"), Input("f-month", "value"), Input("f-dept", "value"),
+        Input("f-profile", "value"), Input("f-mes", "value"), Input("f-patient", "value"), Input("f-metric", "value"),
+        Input("theme-store", "data")
+    ]
+)
+def update_tab_2(years, quarters, months, depts, profiles, mes_list, patient, metric, theme):
+    df = get_optimized_data()
+    if df.empty: return go.Figure(), go.Figure()
 
-        df_sun = filtered_df.groupby(['Наименование отделения', 'Наименование профиля', 'Код Услуги'], observed=True).agg({'Сумма': 'sum', 'Период': 'count'}).reset_index()
-        df_sun.rename(columns={'Период': 'count_val'}, inplace=True)
-        df_sun = df_sun.fillna("Неизвестно")
-        
-        if metric == "sum":
-            sunburst_fig = px.treemap(
-                df_sun, path=['Наименование отделения', 'Наименование профиля', 'Код Услуги'],
-                values='Сумма', color='Сумма', color_continuous_scale='Blues'
-            )
-            sunburst_fig.update_traces(hovertemplate='<b>%{label}</b><br>Сумма: %{value:,.2f} ₽')
-        else:
-            sunburst_fig = px.treemap(
-                df_sun, path=['Наименование отделения', 'Наименование профиля', 'Код Услуги'],
-                values='count_val'
-            )
-            sunburst_fig.update_traces(hovertemplate='<b>%{label}</b><br>Количество: %{value} ед.')
+    mask = pd.Series(True, index=df.index)
+    if years: mask &= df['Year'].isin(years)
+    if quarters: mask &= df['Quarter_Name'].isin(quarters)
+    if months: mask &= df['Month_Name'].isin(months)
+    if depts: mask &= df['Наименование отделения'].isin(depts)
+    if profiles: mask &= df['Наименование профиля'].isin(profiles)
+    if mes_list: mask &= df['Код Услуги'].isin(mes_list)
+    if patient and 'Номер ИБ' in df.columns: mask &= df['Номер ИБ'].astype(str).str.contains(str(patient), case=False)
+
+    filtered_df = df[mask]
+    sunburst_fig, heatmap_fig = go.Figure(), go.Figure()
+
+    if not filtered_df.empty:
+
+        if 'Month_Str' in filtered_df.columns and 'Наименование отделения' in filtered_df.columns:
+            if metric == "sum": pivot = filtered_df.pivot_table(index='Наименование отделения', columns='Month_Str', values='Сумма', aggfunc='sum', fill_value=0)
+            elif metric == "count_patients": pivot = filtered_df.pivot_table(index='Наименование отделения', columns='Month_Str', values='ИД пациента в версии счета', aggfunc=pd.Series.nunique, fill_value=0)
+            else: pivot = filtered_df.pivot_table(index='Наименование отделения', columns='Month_Str', values='Период', aggfunc='count', fill_value=0)
             
-        sunburst_fig.update_traces(
-            maxdepth=2,
-            pathbar=dict(visible=True, textfont=dict(size=15, family="Inter"), edgeshape=">"),
-            root_color="#e9edf7", marker=dict(line=dict(width=1.5, color="#ffffff"))
-        )
-        sunburst_fig.update_layout(margin=dict(t=45, l=10, r=10, b=10), paper_bgcolor="rgba(0,0,0,0)")
+            heatmap_fig.add_trace(go.Heatmap(z=pivot.values, x=pivot.columns, y=pivot.index, colorscale="Blues" if theme == "light" else "Viridis"))
+            heatmap_fig = apply_beautiful_layout(heatmap_fig, theme)
+            heatmap_fig.update_layout(height=max(400, (len(pivot.index) * 35) + 150), xaxis=dict(showgrid=False, type='category'), yaxis=dict(showgrid=False, automargin=True, tickfont=dict(size=11)))
 
-    # --- КРОСС-ФИЛЬТРАЦИЯ ---
+        if set(['Наименование отделения', 'Наименование профиля', 'Код Услуги']).issubset(filtered_df.columns):
+            df_sun = filtered_df.groupby(['Наименование отделения', 'Наименование профиля', 'Код Услуги'], observed=True).agg({'Сумма': 'sum', 'Период': 'count'}).reset_index()
+            df_sun = df_sun.fillna("Неизвестно")
+
+            sort_col = 'Сумма' if metric == "sum" else 'Период'
+            df_sun = df_sun.nlargest(150, sort_col)
+            
+            if metric == "sum":
+                sunburst_fig = px.treemap(df_sun, path=['Наименование отделения', 'Наименование профиля', 'Код Услуги'], values='Сумма', color='Сумма', color_continuous_scale='Blues')
+            else:
+                sunburst_fig = px.treemap(df_sun, path=['Наименование отделения', 'Наименование профиля', 'Код Услуги'], values='Период')
+                
+            sunburst_fig.update_traces(maxdepth=2, pathbar=dict(visible=True, textfont=dict(size=15, family="Inter")), root_color="#e9edf7", marker=dict(line=dict(width=1.5, color="#ffffff")))
+            sunburst_fig.update_layout(margin=dict(t=45, l=10, r=10, b=10), paper_bgcolor="rgba(0,0,0,0)")
+
+    return sunburst_fig, heatmap_fig
+
+
+# 🚀 3. КОЛЛБЭК ТОЛЬКО ДЛЯ ТАБЛИЦЫ 
+@app.callback(
+    [Output("ag-grid-container", "children"), Output("crossfilter-msg", "children")],
+    [
+        Input("f-year", "value"), Input("f-quarter", "value"), Input("f-month", "value"), Input("f-dept", "value"),
+        Input("f-profile", "value"), Input("f-mes", "value"), Input("f-patient", "value"), Input("heatmap-chart", "clickData"),
+        Input("theme-store", "data")
+    ]
+)
+def update_table_only(years, quarters, months, depts, profiles, mes_list, patient, heatmap_click, theme):
+    df = get_optimized_data()
+    if df.empty: return html.Div("Нет данных"), ""
+
+    mask = pd.Series(True, index=df.index)
+    if years: mask &= df['Year'].isin(years)
+    if quarters: mask &= df['Quarter_Name'].isin(quarters)
+    if months: mask &= df['Month_Name'].isin(months)
+    if depts: mask &= df['Наименование отделения'].isin(depts)
+    if profiles: mask &= df['Наименование профиля'].isin(profiles)
+    if mes_list: mask &= df['Код Услуги'].isin(mes_list)
+    if patient and 'Номер ИБ' in df.columns: mask &= df['Номер ИБ'].astype(str).str.contains(str(patient), case=False)
+
+    grid_data = df[mask]
     cf_msg = ""
-    grid_data = filtered_df.copy()
+
     if heatmap_click:
         point = heatmap_click['points'][0]
         clicked_month = str(point['x'])[:7]
         clicked_dept = str(point['y'])
-        grid_data = grid_data[(grid_data['dt'].dt.strftime(
-            '%Y-%m') == clicked_month) & (grid_data['Наименование отделения'] == clicked_dept)]
+        grid_data = grid_data[(grid_data['Month_Str'] == clicked_month) & (grid_data['Наименование отделения'] == clicked_dept)]
         cf_msg = f"🔍 Отфильтровано по: {clicked_dept} ({clicked_month})"
 
-    # --- 5. AG GRID ТАБЛИЦА (КОНСТРУКТОР PIVOT) ---
-    ag_grid = html.Div("Нет данных для таблицы")
-    if not grid_data.empty:
-        agg_cols = ['Наименование отделения', 'Наименование профиля', 'Код Услуги']
-        agg_cols = [c for c in agg_cols if c in grid_data.columns]
-        
-        if agg_cols:
-            if 'Сумма' in grid_data.columns:
-                grid_df = grid_data.groupby(agg_cols, observed=True).agg(Кол_во_услуг=('Период', 'count'), Сумма=('Сумма', 'sum')).reset_index()
-                grid_df['Сумма'] = grid_df['Сумма'].round(2)
-            else:
-                grid_df = grid_data.groupby(
-                    agg_cols, observed=True).agg(
-                    Кол_во_услуг=(
-                        'Период', 'count')).reset_index()
+    if grid_data.empty: return html.Div("Нет данных"), cf_msg
 
-            column_defs = []
-            for col in grid_df.columns:
-                col_def = {
-                    "field": col,
-                    "sortable": True,
-                    "enableRowGroup": True,
-                    "enablePivot": True,
-                }
-                if col in ['Кол_во_услуг', 'Сумма']:
-                    col_def["filter"] = "agNumberColumnFilter"
-                    col_def["enableValue"] = True
-                    if col == 'Сумма':
-                        # По умолчанию суммы складываем
-                        col_def["aggFunc"] = "sum"
-                else:
-                    col_def["filter"] = "agSetColumnFilter"
-                column_defs.append(col_def)
+    agg_cols = ['Наименование отделения', 'Наименование профиля', 'Код Услуги']
+    agg_cols = [c for c in agg_cols if c in grid_data.columns]
+    
+    if 'Сумма' in grid_data.columns:
+        grid_df = grid_data.groupby(agg_cols, observed=True).agg(Кол_во_услуг=('Период', 'count'), Сумма=('Сумма', 'sum')).reset_index()
+        grid_df['Сумма'] = grid_df['Сумма'].round(2)
+    else:
+        grid_df = grid_data.groupby(agg_cols, observed=True).agg(Кол_во_услуг=('Период', 'count')).reset_index()
 
-            grid_theme = "ag-theme-alpine" if theme == "light" else "ag-theme-alpine-dark"
-            ag_grid = dag.AgGrid(
-                id="interactive-grid",
-                rowData=grid_df.to_dict("records"),
-                columnDefs=column_defs,
-                defaultColDef={
-                    "flex": 1,
-                    "minWidth": 150,
-                    "floatingFilter": True},
-                className=grid_theme,
-                enableEnterpriseModules=True,
+    column_defs = []
+    for col in grid_df.columns:
+        col_def = {"field": col, "sortable": True, "enableRowGroup": True, "enablePivot": True}
+        if col in ['Кол_во_услуг', 'Сумма']:
+            col_def.update({"filter": "agNumberColumnFilter", "enableValue": True})
+            if col == 'Сумма': col_def["aggFunc"] = "sum"
+        else:
+            col_def["filter"] = "agSetColumnFilter"
+        column_defs.append(col_def)
 
-                dashGridOptions={
-                    "localeText": AG_GRID_LOCALE_RU,
-                    "pagination": True,
-                    "paginationPageSize": 15,
-                    "rowGroupPanelShow": "always",
-                    "sideBar": True
-                },
-                csvExportParams={
-                    "fileName": "Clinical_Table_Export.csv",
-                    "columnSeparator": ";"},
-                style={
-                    "height": "650px",
-                    "width": "100%",
-                    "borderRadius": "12px",
-                    "overflow": "hidden"}
-            )
-
-    return fig, "Аналитика по времени", total_sum, total_patients, total_mes, active_depts, insight_html, heatmap_fig, ag_grid, sunburst_fig, cf_msg
-
+    ag_grid = dag.AgGrid(
+        rowData=grid_df.to_dict("records"), columnDefs=column_defs, 
+        defaultColDef={"flex": 1, "minWidth": 150, "floatingFilter": True}, 
+        className="ag-theme-alpine" if theme == "light" else "ag-theme-alpine-dark", 
+        enableEnterpriseModules=True, 
+        dashGridOptions={"localeText": AG_GRID_LOCALE_RU, "pagination": True, "paginationPageSize": 15, "rowGroupPanelShow": "always", "sideBar": True}, 
+        style={"height": "650px", "width": "100%", "borderRadius": "12px"}
+    )
+    
+    return ag_grid, cf_msg
 
 # --- НОВЫЙ КОЛЛБЭК: КАРТОЧКА ПАЦИЕНТА ---
 @app.callback(
