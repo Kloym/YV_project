@@ -1600,11 +1600,15 @@ def update_tab_1(years, quarters, months, depts, profiles, mes_list, patient, me
             for i, group_val in enumerate(top_groups):
                 g_data = trend[trend[group_by_col] == group_val]
                 c = colors[i % len(colors)]
+
+                custom_data_formatted = [f"STD|{group_val}"] * len(g_data)
+                
                 fig.add_trace(go.Scatter(
                     x=g_data['dt'], y=g_data[y_col], 
                     name=str(group_val)[:32] + "...", mode='lines+markers',
                     line=dict(width=4, shape='spline', smoothing=1.3, color=c["hex"]),
-                    marker=dict(size=12, color=c["hex"]), fill='tozeroy', fillcolor=c["rgba"]
+                    marker=dict(size=12, color=c["hex"]), fill='tozeroy', fillcolor=c["rgba"],
+                    customdata=custom_data_formatted
                 ))
 
     fig = apply_beautiful_layout(fig, theme, x_range, tickvals, ticktext)
