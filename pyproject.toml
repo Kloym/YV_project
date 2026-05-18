@@ -15,6 +15,9 @@ openpyxl = "^3.1.5"
 duckdb = "^1.5.2"
 dash-ag-grid = "^35.2.0"
 autopep8 = "^2.3.2"
+black = "^26.5.0"
+flask-caching = "^2.4.0"
+redis = "^7.4.0"
 
 
 [build-system]
