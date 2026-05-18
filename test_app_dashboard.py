@@ -73,7 +73,6 @@ _CACHE = {"data": pd.DataFrame(), "last_modified": 0}
 
 # --- ИНИЦИАЛИЗАЦИЯ И ИНДЕКСЫ БД ---
 def init_db_indexes():
-    """Создает индексы в SQLite для максимального ускорения будущих SQL запросов"""
     if not os.path.exists(DB_NAME):
         return
     with sqlite3.connect(DB_NAME) as conn:
@@ -110,17 +109,17 @@ app = dash.Dash(
 app.title = "Clinical Dashboard"
 
 
-# --- НАСТРОЙКА КЭШИРОВАНИЯ (REDIS / ФАЙЛОВЫЙ ФОЛЛБЭК) ---
+# --- НАСТРОЙКА КЭШИРОВАНИЯ ---
 try:
     cache = Cache(
         app.server,
         config={
             "CACHE_TYPE": "RedisCache",
             "CACHE_REDIS_URL": "redis://127.0.0.1:6379/0",
-            "CACHE_DEFAULT_TIMEOUT": 600,  # Кэш живет 10 минут
+            "CACHE_DEFAULT_TIMEOUT": 600,
         },
     )
-    cache.set("test_key", "test_value")  # Проверка связи
+    cache.set("test_key", "test_value")
 except:
     logging.warning("Redis недоступен. Включен локальный файловый кэш FileSystemCache.")
     cache = Cache(
@@ -852,7 +851,254 @@ app.layout = html.Div(
                                                             width=12,
                                                         )
                                                     ]
-                                                )
+                                                ),
+                                                # ВОССТАНОВЛЕННАЯ ВЕРСТКА SQL ПЕСОЧНИЦЫ
+                                                dbc.Row(
+                                                    className="mt-4 no-print",
+                                                    children=[
+                                                        dbc.Col(
+                                                            html.Div(
+                                                                [
+                                                                    html.H4(
+                                                                        [
+                                                                            html.I(
+                                                                                className="fas fa-terminal",
+                                                                                style={
+                                                                                    "marginRight": "12px",
+                                                                                    "color": "var(--primary)",
+                                                                                },
+                                                                            ),
+                                                                            "SQL-Песочница",
+                                                                        ],
+                                                                        style={
+                                                                            "fontWeight": "800",
+                                                                            "color": "var(--text-main)",
+                                                                            "marginBottom": "15px",
+                                                                        },
+                                                                    ),
+                                                                    html.P(
+                                                                        "Напишите ваш SQL-запрос.",
+                                                                        style={
+                                                                            "color": "var(--text-muted)",
+                                                                            "fontSize": "14px",
+                                                                            "marginBottom": "20px",
+                                                                        },
+                                                                    ),
+                                                                    html.Div(
+                                                                        style={
+                                                                            "position": "relative",
+                                                                            "width": "100%",
+                                                                        },
+                                                                        children=[
+                                                                            dcc.Textarea(
+                                                                                id="sql-input",
+                                                                                className="sql-editor",
+                                                                                style={
+                                                                                    "resize": "none",
+                                                                                    "paddingRight": "50px",
+                                                                                },
+                                                                                placeholder="Введите ваш SQL запрос...",
+                                                                                value="SELECT \n  [Наименование отделения], \n  COUNT(*) as [Количество услуг] \nFROM medical_data \nGROUP BY [Наименование отделения] \nORDER BY [Количество услуг] DESC \nLIMIT 7;",
+                                                                            ),
+                                                                            html.Button(
+                                                                                html.I(
+                                                                                    className="fas fa-expand"
+                                                                                ),
+                                                                                id="btn-expand-sql",
+                                                                                title="Полноэкранный редактор",
+                                                                                style={
+                                                                                    "position": "absolute",
+                                                                                    "top": "12px",
+                                                                                    "right": "12px",
+                                                                                    "background": "rgba(255, 255, 255, 0.05)",
+                                                                                    "border": "none",
+                                                                                    "borderRadius": "8px",
+                                                                                    "padding": "8px",
+                                                                                    "color": "#a3aed1",
+                                                                                    "fontSize": "18px",
+                                                                                    "cursor": "pointer",
+                                                                                    "transition": "all 0.3s",
+                                                                                },
+                                                                            ),
+                                                                        ],
+                                                                    ),
+                                                                    dbc.Button(
+                                                                        [
+                                                                            html.I(
+                                                                                className="fas fa-play",
+                                                                                style={
+                                                                                    "marginRight": "10px"
+                                                                                },
+                                                                            ),
+                                                                            "Выполнить SQL",
+                                                                        ],
+                                                                        id="btn-execute-sql",
+                                                                        style={
+                                                                            "backgroundColor": "var(--primary)",
+                                                                            "border": "none",
+                                                                            "borderRadius": "12px",
+                                                                            "padding": "12px 24px",
+                                                                            "fontWeight": "600",
+                                                                            "marginTop": "15px",
+                                                                        },
+                                                                    ),
+                                                                    html.Div(
+                                                                        id="sql-error",
+                                                                        style={
+                                                                            "color": "#E11D48",
+                                                                            "marginTop": "15px",
+                                                                            "fontWeight": "600",
+                                                                            "fontSize": "14px",
+                                                                        },
+                                                                    ),
+                                                                ],
+                                                                style={
+                                                                    "backgroundColor": "var(--card-bg)",
+                                                                    "borderRadius": "24px",
+                                                                    "padding": "35px",
+                                                                    "boxShadow": "var(--shadow)",
+                                                                    "height": "100%",
+                                                                },
+                                                            ),
+                                                            xl=8,
+                                                            lg=12,
+                                                            className="mb-4",
+                                                        ),
+                                                        dbc.Col(
+                                                            html.Div(
+                                                                [
+                                                                    html.H5(
+                                                                        [
+                                                                            html.I(
+                                                                                className="fas fa-database",
+                                                                                style={
+                                                                                    "marginRight": "10px",
+                                                                                    "color": "#01B574",
+                                                                                },
+                                                                            ),
+                                                                            "Схема Данных",
+                                                                        ],
+                                                                        style={
+                                                                            "fontWeight": "800",
+                                                                            "color": "var(--text-main)",
+                                                                            "marginBottom": "25px",
+                                                                        },
+                                                                    ),
+                                                                    html.Div(
+                                                                        [
+                                                                            html.Span(
+                                                                                "Таблица:",
+                                                                                style={
+                                                                                    "color": "var(--text-muted)",
+                                                                                    "fontSize": "13px",
+                                                                                    "fontWeight": "600",
+                                                                                    "textTransform": "uppercase",
+                                                                                    "marginRight": "10px",
+                                                                                },
+                                                                            ),
+                                                                            html.Span(
+                                                                                "medical_data",
+                                                                                style={
+                                                                                    "color": "var(--primary)",
+                                                                                    "fontWeight": "700",
+                                                                                    "fontSize": "16px",
+                                                                                    "backgroundColor": "var(--primary-light)",
+                                                                                    "padding": "4px 10px",
+                                                                                    "borderRadius": "8px",
+                                                                                },
+                                                                            ),
+                                                                        ],
+                                                                        style={
+                                                                            "marginBottom": "25px"
+                                                                        },
+                                                                    ),
+                                                                    html.P(
+                                                                        "Доступные колонки:",
+                                                                        style={
+                                                                            "color": "var(--text-muted)",
+                                                                            "fontSize": "13px",
+                                                                            "fontWeight": "600",
+                                                                            "textTransform": "uppercase",
+                                                                            "marginBottom": "15px",
+                                                                        },
+                                                                    ),
+                                                                    html.Div(
+                                                                        [
+                                                                            html.Span(
+                                                                                "Период",
+                                                                                className="schema-badge",
+                                                                            ),
+                                                                            html.Span(
+                                                                                "Наименование отделения",
+                                                                                className="schema-badge",
+                                                                            ),
+                                                                            html.Span(
+                                                                                "Код Услуги",
+                                                                                className="schema-badge",
+                                                                            ),
+                                                                            html.Span(
+                                                                                "Наименование профиля",
+                                                                                className="schema-badge",
+                                                                            ),
+                                                                            html.Span(
+                                                                                "ИД пациента в версии счета",
+                                                                                className="schema-badge",
+                                                                            ),
+                                                                            html.Span(
+                                                                                "Сумма",
+                                                                                className="schema-badge",
+                                                                            ),
+                                                                            html.Span(
+                                                                                "Номер ИБ",
+                                                                                className="schema-badge",
+                                                                            ),
+                                                                        ]
+                                                                    ),
+                                                                    html.Div(
+                                                                        [
+                                                                            html.I(
+                                                                                className="fas fa-lightbulb",
+                                                                                style={
+                                                                                    "marginRight": "8px",
+                                                                                    "color": "#FF7D00",
+                                                                                },
+                                                                            ),
+                                                                            html.Span(
+                                                                                "Если в названии колонки есть пробелы, оборачивайте её в квадратные скобки: ",
+                                                                                style={
+                                                                                    "color": "var(--text-muted)"
+                                                                                },
+                                                                            ),
+                                                                            html.Code(
+                                                                                "[Наименование отделения]",
+                                                                                style={
+                                                                                    "color": "var(--text-main)",
+                                                                                    "fontWeight": "600",
+                                                                                },
+                                                                            ),
+                                                                        ],
+                                                                        style={
+                                                                            "marginTop": "30px",
+                                                                            "fontSize": "13px",
+                                                                            "backgroundColor": "var(--bg-color)",
+                                                                            "padding": "15px",
+                                                                            "borderRadius": "12px",
+                                                                            "border": "1px solid var(--grid-color)",
+                                                                        },
+                                                                    ),
+                                                                ],
+                                                                style={
+                                                                    "backgroundColor": "var(--card-bg)",
+                                                                    "borderRadius": "24px",
+                                                                    "padding": "35px",
+                                                                    "boxShadow": "var(--shadow)",
+                                                                    "height": "100%",
+                                                                },
+                                                            ),
+                                                            width=4,
+                                                        ),
+                                                    ],
+                                                ),
                                             ],
                                         ),
                                     ],
@@ -1045,23 +1291,125 @@ app.layout = html.Div(
                             ],
                         ),
                         dbc.Tab(
-                            label="💼 Бизнес-аналитика", tab_id="tab-abc",
+                            label="💼 Бизнес-аналитика",
+                            tab_id="tab-abc",
                             children=[
-                                html.Div(style={"marginTop": "25px"}, children=[
-                                    dbc.Row([dbc.Col(html.Div([
-                                        html.Div([
-                                            html.H4([html.I(className="fas fa-chart-pie", style={"color": "#4318FF", "marginRight": "12px"}), "ABC-Анализ выручки"], style={"fontWeight": "800", "margin": "0"}),
-                                            html.Button(html.I(className="fas fa-file-excel"), id="btn-export-abc", title="Скачать цветной Excel", className="no-print", style={"background": "transparent", "border": "none", "fontSize": "22px", "color": "#01B574", "cursor": "pointer"})
-                                        ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "15px"}),
-                                        html.P("Классификация по правилу Парето (Группа А: приносит 80% выручки, Группа В: 15%, Группа С: 5%).", style={"color": "var(--text-muted)", "marginBottom": "20px"}),
-                                        html.Label("Сгруппировать по:", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "13px"}),
-                                        dcc.Dropdown(id="abc-group-by", options=[{"label": "📋 По кодам МЭС", "value": "Код Услуги"}, {"label": "🏥 По отделениям", "value": "Наименование отделения"}, {"label": "🩺 По профилям", "value": "Наименование профиля"}], value="Код Услуги", clearable=False, style={"marginBottom": "25px", "width": "50%"}),
-                                        dcc.Loading(type="dot", color="#4318FF", children=html.Div(id="abc-grid-container", style={"width": "100%"})),
-                                        dcc.Download(id="download-abc-xlsx")
-                                    ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)"}), width=12)])
-                                ])
-                            ]
-                        )
+                                html.Div(
+                                    style={"marginTop": "25px"},
+                                    children=[
+                                        dbc.Row(
+                                            [
+                                                dbc.Col(
+                                                    html.Div(
+                                                        [
+                                                            html.Div(
+                                                                [
+                                                                    html.H4(
+                                                                        [
+                                                                            html.I(
+                                                                                className="fas fa-chart-pie",
+                                                                                style={
+                                                                                    "color": "#4318FF",
+                                                                                    "marginRight": "12px",
+                                                                                },
+                                                                            ),
+                                                                            "ABC-Анализ выручки",
+                                                                        ],
+                                                                        style={
+                                                                            "fontWeight": "800",
+                                                                            "margin": "0",
+                                                                        },
+                                                                    ),
+                                                                    html.Button(
+                                                                        html.I(
+                                                                            className="fas fa-file-excel"
+                                                                        ),
+                                                                        id="btn-export-abc",
+                                                                        title="Скачать цветной Excel",
+                                                                        className="no-print",
+                                                                        style={
+                                                                            "background": "transparent",
+                                                                            "border": "none",
+                                                                            "fontSize": "22px",
+                                                                            "color": "#01B574",
+                                                                            "cursor": "pointer",
+                                                                        },
+                                                                    ),
+                                                                ],
+                                                                style={
+                                                                    "display": "flex",
+                                                                    "justifyContent": "space-between",
+                                                                    "alignItems": "center",
+                                                                    "marginBottom": "15px",
+                                                                },
+                                                            ),
+                                                            html.P(
+                                                                "Классификация по правилу Парето (Группа А: приносит 80% выручки, Группа В: 15%, Группа С: 5%).",
+                                                                style={
+                                                                    "color": "var(--text-muted)",
+                                                                    "marginBottom": "20px",
+                                                                },
+                                                            ),
+                                                            html.Label(
+                                                                "Сгруппировать по:",
+                                                                style={
+                                                                    "color": "var(--text-main)",
+                                                                    "fontWeight": "600",
+                                                                    "fontSize": "13px",
+                                                                },
+                                                            ),
+                                                            dcc.Dropdown(
+                                                                id="abc-group-by",
+                                                                options=[
+                                                                    {
+                                                                        "label": "📋 По кодам МЭС",
+                                                                        "value": "Код Услуги",
+                                                                    },
+                                                                    {
+                                                                        "label": "🏥 По отделениям",
+                                                                        "value": "Наименование отделения",
+                                                                    },
+                                                                    {
+                                                                        "label": "🩺 По профилям",
+                                                                        "value": "Наименование профиля",
+                                                                    },
+                                                                ],
+                                                                value="Код Услуги",
+                                                                clearable=False,
+                                                                style={
+                                                                    "marginBottom": "25px",
+                                                                    "width": "50%",
+                                                                },
+                                                            ),
+                                                            dcc.Loading(
+                                                                type="dot",
+                                                                color="#4318FF",
+                                                                children=html.Div(
+                                                                    id="abc-grid-container",
+                                                                    style={
+                                                                        "width": "100%"
+                                                                    },
+                                                                ),
+                                                            ),
+                                                            dcc.Download(
+                                                                id="download-abc-xlsx"
+                                                            ),
+                                                        ],
+                                                        style={
+                                                            "backgroundColor": "var(--card-bg)",
+                                                            "borderRadius": "24px",
+                                                            "padding": "35px",
+                                                            "boxShadow": "var(--shadow)",
+                                                        },
+                                                    ),
+                                                    width=12,
+                                                )
+                                            ]
+                                        )
+                                    ],
+                                )
+                            ],
+                        ),
                     ],
                 ),
             ],
@@ -1090,6 +1438,224 @@ app.layout = html.Div(
             is_open=False,
             size="lg",
             centered=True,
+        ),
+        # --- МОДАЛЬНОЕ ОКНО: SQL РЕДАКТОР ---
+        dbc.Modal(
+            [
+                dbc.ModalHeader(
+                    dbc.ModalTitle(
+                        [
+                            html.I(
+                                className="fas fa-code", style={"marginRight": "10px"}
+                            ),
+                            "Продвинутый SQL-Редактор",
+                        ],
+                        style={"fontWeight": "800", "color": "var(--primary)"},
+                    )
+                ),
+                dbc.ModalBody(
+                    dbc.Row(
+                        [
+                            dbc.Col(
+                                html.Div(
+                                    [
+                                        dcc.Textarea(
+                                            id="sql-modal-input",
+                                            className="sql-editor",
+                                            style={
+                                                "height": "480px",
+                                                "resize": "none",
+                                                "fontSize": "16px",
+                                                "padding": "20px",
+                                            },
+                                        ),
+                                        html.Div(
+                                            id="sql-modal-linter",
+                                            style={
+                                                "marginTop": "8px",
+                                                "fontSize": "13px",
+                                                "fontWeight": "600",
+                                                "minHeight": "20px",
+                                            },
+                                        ),
+                                    ]
+                                ),
+                                width=8,
+                            ),
+                            dbc.Col(
+                                html.Div(
+                                    [
+                                        html.H5(
+                                            [
+                                                html.I(
+                                                    className="fas fa-table",
+                                                    style={
+                                                        "marginRight": "10px",
+                                                        "color": "#01B574",
+                                                    },
+                                                ),
+                                                "Схема: medical_data",
+                                            ],
+                                            style={
+                                                "fontWeight": "800",
+                                                "color": "var(--text-main)",
+                                                "marginBottom": "20px",
+                                            },
+                                        ),
+                                        html.P(
+                                            "Доступные колонки:",
+                                            style={
+                                                "color": "var(--text-muted)",
+                                                "fontSize": "13px",
+                                                "fontWeight": "600",
+                                                "textTransform": "uppercase",
+                                                "marginBottom": "15px",
+                                            },
+                                        ),
+                                        html.Div(
+                                            [
+                                                html.Span(
+                                                    "Период",
+                                                    className="schema-badge",
+                                                    style={
+                                                        "width": "100%",
+                                                        "textAlign": "left",
+                                                    },
+                                                ),
+                                                html.Span(
+                                                    "Наименование отделения",
+                                                    className="schema-badge",
+                                                    style={
+                                                        "width": "100%",
+                                                        "textAlign": "left",
+                                                    },
+                                                ),
+                                                html.Span(
+                                                    "Код Услуги",
+                                                    className="schema-badge",
+                                                    style={
+                                                        "width": "100%",
+                                                        "textAlign": "left",
+                                                    },
+                                                ),
+                                                html.Span(
+                                                    "Наименование профиля",
+                                                    className="schema-badge",
+                                                    style={
+                                                        "width": "100%",
+                                                        "textAlign": "left",
+                                                    },
+                                                ),
+                                                html.Span(
+                                                    "ИД пациента в версии счета",
+                                                    className="schema-badge",
+                                                    style={
+                                                        "width": "100%",
+                                                        "textAlign": "left",
+                                                    },
+                                                ),
+                                                html.Span(
+                                                    "Сумма",
+                                                    className="schema-badge",
+                                                    style={
+                                                        "width": "100%",
+                                                        "textAlign": "left",
+                                                    },
+                                                ),
+                                                html.Span(
+                                                    "Номер ИБ",
+                                                    className="schema-badge",
+                                                    style={
+                                                        "width": "100%",
+                                                        "textAlign": "left",
+                                                    },
+                                                ),
+                                            ]
+                                        ),
+                                        html.Div(
+                                            [
+                                                html.I(
+                                                    className="fas fa-lightbulb",
+                                                    style={
+                                                        "marginRight": "8px",
+                                                        "color": "#FF7D00",
+                                                    },
+                                                ),
+                                                html.Span(
+                                                    "Если в названии колонки есть пробелы, оборачивайте её в квадратные скобки: ",
+                                                    style={
+                                                        "color": "var(--text-muted)"
+                                                    },
+                                                ),
+                                                html.Code(
+                                                    "[Наименование отделения]",
+                                                    style={
+                                                        "color": "var(--text-main)",
+                                                        "fontWeight": "600",
+                                                    },
+                                                ),
+                                            ],
+                                            style={
+                                                "marginTop": "30px",
+                                                "fontSize": "13px",
+                                                "backgroundColor": "var(--bg-color)",
+                                                "padding": "15px",
+                                                "borderRadius": "12px",
+                                                "border": "1px solid var(--grid-color)",
+                                            },
+                                        ),
+                                    ],
+                                    style={
+                                        "backgroundColor": "var(--bg-color)",
+                                        "borderRadius": "16px",
+                                        "padding": "25px",
+                                        "height": "100%",
+                                        "border": "1px solid var(--grid-color)",
+                                    },
+                                ),
+                                width=4,
+                            ),
+                        ]
+                    )
+                ),
+                dbc.ModalFooter(
+                    [
+                        dbc.Button(
+                            "Отмена",
+                            id="btn-close-sql-modal",
+                            style={
+                                "backgroundColor": "transparent",
+                                "border": "none",
+                                "color": "var(--text-muted)",
+                                "fontWeight": "600",
+                                "marginRight": "15px",
+                            },
+                        ),
+                        dbc.Button(
+                            [
+                                html.I(
+                                    className="fas fa-save",
+                                    style={"marginRight": "8px"},
+                                ),
+                                "Сохранить и Применить",
+                            ],
+                            id="btn-save-sql-modal",
+                            style={
+                                "backgroundColor": "var(--primary)",
+                                "border": "none",
+                                "borderRadius": "12px",
+                                "fontWeight": "600",
+                                "padding": "10px 20px",
+                            },
+                        ),
+                    ]
+                ),
+            ],
+            id="sql-editor-modal",
+            is_open=False,
+            size="xl",
+            centered=True,
+            backdrop="static",
         ),
         # --- МОДАЛЬНОЕ ОКНО: ПАЦИЕНТ ---
         dbc.Modal(
@@ -1125,15 +1691,7 @@ app.layout = html.Div(
     ]
 )
 
-
-# =====================================================================
-# КЭШИРОВАННЫЕ ФУНКЦИИ-ПОМОЩНИКИ (ДЛЯ СКОРОСТИ И REDIS)
-# Мы передаем сюда tuple(filters), чтобы Redis мог их захешировать.
-# =====================================================================
-
-
 def to_tuple(val):
-    """Преобразует списки в кортежи для кэширования"""
     return tuple(val) if isinstance(val, list) else val
 
 
@@ -1173,8 +1731,6 @@ def build_tab_1_data(
 
     filtered_df = df[mask]
 
-    # --- DUCKDB АГРЕГАЦИЯ ---
-    # DuckDB автоматически увидит локальный датафрейм `filtered_df`
     total_sum = duckdb.query("SELECT SUM(Сумма) FROM filtered_df").fetchone()[0] or 0
     total_patients = (
         duckdb.query(
@@ -1212,7 +1768,6 @@ def build_tab_1_data(
         ]
 
         if group_by_col in filtered_df.columns:
-            # DUCKDB АГРЕГАЦИЯ ДЛЯ ГРАФИКА ЛИНИЙ
             if metric == "sum":
                 query = f'SELECT dt, "{group_by_col}", SUM(Сумма) as val FROM filtered_df GROUP BY dt, "{group_by_col}"'
             elif metric == "count_patients":
@@ -1236,7 +1791,6 @@ def build_tab_1_data(
                 g_data = trend[trend[group_by_col] == group_val]
                 c = colors[i % len(colors)]
 
-                # --- ИСПРАВЛЕННАЯ СТРОКА С CUSTOMDATA ---
                 custom_data_formatted = [f"STD|{group_val}"] * len(g_data)
 
                 fig.add_trace(
@@ -1253,6 +1807,75 @@ def build_tab_1_data(
                         fillcolor=c["rgba"],
                         customdata=custom_data_formatted,
                     )
+                )
+
+        # ВОССТАНОВЛЕННАЯ ЛОГИКА ПРОЦЕНТОВ (СВОДКА)
+        if not trend.empty:
+            if metric == "sum":
+                monthly = duckdb.query(
+                    "SELECT Month_Str, SUM(Сумма) as val FROM filtered_df GROUP BY Month_Str ORDER BY Month_Str"
+                ).df()
+                lbl = "Общая сумма"
+                fmt = lambda x: f"{x:,.2f} ₽".replace(",", " ")
+            elif metric == "count_patients":
+                monthly = duckdb.query(
+                    'SELECT Month_Str, COUNT(DISTINCT "ИД пациента в версии счета") as val FROM filtered_df GROUP BY Month_Str ORDER BY Month_Str'
+                ).df()
+                lbl = "Уникальные пациенты"
+                fmt = lambda x: f"{x:,.0f} чел.".replace(",", " ")
+            else:
+                monthly = duckdb.query(
+                    "SELECT Month_Str, COUNT(*) as val FROM filtered_df GROUP BY Month_Str ORDER BY Month_Str"
+                ).df()
+                lbl = "Оказано услуг"
+                fmt = lambda x: f"{x:,.0f} ед.".replace(",", " ")
+
+            if len(monthly) >= 2:
+                val_first = monthly.iloc[0]["val"]
+                val_last = monthly.iloc[-1]["val"]
+                diff = val_last - val_first
+                pct = (diff / val_first * 100) if val_first > 0 else 0
+
+                color = "#01B574" if diff >= 0 else "#E11D48"
+                icon = "fa-arrow-up" if diff >= 0 else "fa-arrow-down"
+                sign = "+" if diff >= 0 else ""
+
+                insight_html = html.Div(
+                    [
+                        html.Div(
+                            [
+                                html.I(
+                                    className="fas fa-robot",
+                                    style={
+                                        "marginRight": "8px",
+                                        "color": "var(--primary)",
+                                    },
+                                ),
+                                html.B("Сводка:"),
+                            ],
+                            style={"marginBottom": "10px", "fontSize": "16px"},
+                        ),
+                        html.Span(
+                            f"Показатель «{lbl}» изменился с {fmt(val_first)} до {fmt(val_last)}. Разница: "
+                        ),
+                        html.Span(
+                            [
+                                html.I(
+                                    className=f"fas {icon}",
+                                    style={"marginRight": "5px"},
+                                ),
+                                f"{sign}{fmt(diff)} ({sign}{pct:.1f}%)",
+                            ],
+                            style={
+                                "color": color,
+                                "fontWeight": "800",
+                                "backgroundColor": f"{color}20",
+                                "padding": "4px 8px",
+                                "borderRadius": "6px",
+                                "marginLeft": "8px",
+                            },
+                        ),
+                    ]
                 )
 
     fig = apply_beautiful_layout(fig, theme, x_range, tickvals, ticktext)
@@ -1297,7 +1920,6 @@ def build_tab_2_data(
     sunburst_fig, heatmap_fig = go.Figure(), go.Figure()
 
     if not filtered_df.empty:
-        # ТЕПЛОВАЯ КАРТА (DuckDB)
         if (
             "Month_Str" in filtered_df.columns
             and "Наименование отделения" in filtered_df.columns
@@ -1329,21 +1951,14 @@ def build_tab_2_data(
                 yaxis=dict(showgrid=False, automargin=True, tickfont=dict(size=11)),
             )
 
-        # ДЕРЕВО (DuckDB)
         if set(
             ["Наименование отделения", "Наименование профиля", "Код Услуги"]
         ).issubset(filtered_df.columns):
-            query_tree = """
-                SELECT "Наименование отделения", "Наименование профиля", "Код Услуги",
-                       SUM(Сумма) as Сумма, COUNT(*) as count_val
-                FROM filtered_df
-                GROUP BY "Наименование отделения", "Наименование профиля", "Код Услуги"
-            """
+            query_tree = """SELECT "Наименование отделения", "Наименование профиля", "Код Услуги", SUM(Сумма) as Сумма, COUNT(*) as count_val FROM filtered_df GROUP BY "Наименование отделения", "Наименование профиля", "Код Услуги" """
             df_sun = duckdb.query(query_tree).df().fillna("Неизвестно")
 
             sort_col = "Сумма" if metric == "sum" else "count_val"
             df_sun = df_sun.nlargest(150, sort_col)
-
             val_col = "Сумма" if metric == "sum" else "count_val"
             sunburst_fig = px.treemap(
                 df_sun,
@@ -1363,11 +1978,6 @@ def build_tab_2_data(
             )
 
     return sunburst_fig, heatmap_fig
-
-
-# =====================================================================
-# ОСНОВНЫЕ DASH-КОЛЛБЭКИ (С ЛЕНИВОЙ ЗАГРУЗКОЙ)
-# =====================================================================
 
 
 @app.callback(
@@ -1743,7 +2353,6 @@ def update_abc_analysis(
 
     filtered_df = df[mask]
 
-    # DuckDB ABC Aggregation
     query_abc = f"""
         SELECT "{group_by}", SUM(Сумма) as Сумма, COUNT(*) as Кол_во_услуг
         FROM filtered_df
@@ -1840,7 +2449,7 @@ def update_abc_analysis(
     return ag_grid, dash.no_update
 
 
-# --- ДЕТАЛИЗАЦИЯ (МОДАЛЬНОЕ ОКНО) ---
+# --- ДЕТАЛИЗАЦИЯ (ИСПРАВЛЕННОЕ МОДАЛЬНОЕ ОКНО) ---
 @app.callback(
     [
         Output("drilldown-modal", "is_open"),
@@ -1852,9 +2461,29 @@ def update_abc_analysis(
         State("drilldown-modal", "is_open"),
         State("f-group-by", "value"),
         State("f-metric", "value"),
+        State("f-year", "value"),
+        State("f-quarter", "value"),
+        State("f-month", "value"),
+        State("f-dept", "value"),
+        State("f-profile", "value"),
+        State("f-mes", "value"),
+        State("f-patient", "value"),
     ],
 )
-def drilldown_modal(clickData, close_clicks, is_open, group_by_col, metric):
+def drilldown_modal(
+    clickData,
+    close_clicks,
+    is_open,
+    group_by_col,
+    metric,
+    years,
+    quarters,
+    months,
+    depts,
+    profiles,
+    mes_list,
+    patient,
+):
     ctx = dash.callback_context
     if not ctx.triggered:
         return is_open, dash.no_update, dash.no_update
@@ -1878,11 +2507,28 @@ def drilldown_modal(clickData, close_clicks, is_open, group_by_col, metric):
         clicked_group = custom_info.split("|")[1] if "|" in custom_info else custom_info
 
         df = get_optimized_data()
-        date_str = clicked_date.split(" ")[0]
 
-        mask = (df["dt"].astype(str).str.startswith(date_str)) & (
-            df[group_by_col].astype(str) == str(clicked_group)
-        )
+        mask = pd.Series(True, index=df.index)
+        if years:
+            mask &= df["Year"].isin(years)
+        if quarters:
+            mask &= df["Quarter_Name"].isin(quarters)
+        if months:
+            mask &= df["Month_Name"].isin(months)
+        if depts:
+            mask &= df["Наименование отделения"].isin(depts)
+        if profiles:
+            mask &= df["Наименование профиля"].isin(profiles)
+        if mes_list:
+            mask &= df["Код Услуги"].isin(mes_list)
+        if patient and "Номер ИБ" in df.columns:
+            mask &= df["Номер ИБ"].astype(str).str.contains(str(patient), case=False)
+
+        # Жесткая и правильная фильтрация по кликнутой дате и группе
+        clicked_date_str = clicked_date.split(" ")[0]
+        mask &= df["dt"].dt.strftime("%Y-%m-%d") == clicked_date_str
+        mask &= df[group_by_col].astype(str).str.strip() == str(clicked_group).strip()
+
         df_filtered = df[mask]
 
         if group_by_col == "Наименование отделения":
@@ -2283,6 +2929,140 @@ def toggle_patient_modal(patient_id, close_clicks, is_open, theme):
     return is_open, dash.no_update, dash.no_update
 
 
+# --- SQL ПЕСОЧНИЦА ---
+@app.callback(
+    [
+        Output("main-line-chart", "figure", allow_duplicate=True),
+        Output("main-chart-title", "children", allow_duplicate=True),
+        Output("sql-error", "children"),
+        Output("smart-insights-container", "children", allow_duplicate=True),
+    ],
+    Input("btn-execute-sql", "n_clicks"),
+    [State("sql-input", "value"), State("theme-store", "data")],
+    prevent_initial_call=True,
+)
+def execute_custom_sql(n_clicks, query, theme):
+    sql_insight = html.Div(
+        [
+            html.I(
+                className="fas fa-bolt",
+                style={"color": "#FF7D00", "marginRight": "12px", "fontSize": "20px"},
+            ),
+            html.Span(
+                "DuckDB: ", style={"fontWeight": "800", "color": "var(--text-main)"}
+            ),
+            html.Span(
+                "Запрос выполнен. Модальная детализация в этом режиме отключена.",
+                style={"color": "var(--text-muted)"},
+            ),
+        ]
+    )
+
+    if not query or not query.strip():
+        return dash.no_update, dash.no_update, "", dash.no_update
+
+    try:
+        df = get_optimized_data()
+        safe_query = query.replace("[", '"').replace("]", '"')
+
+        duckdb.register("medical_data", df)
+        df_sql = duckdb.query(safe_query).df()
+
+        if df_sql.empty:
+            return (
+                dash.no_update,
+                dash.no_update,
+                "✅ Запрос выполнен успешно (0 строк).",
+                dash.no_update,
+            )
+
+        fig = go.Figure()
+        x_col = df_sql.columns[0]
+        max_y_value = 0
+        color_idx = 0
+        has_numeric = False
+
+        colors = [
+            {"hex": "#4318FF", "rgba": "rgba(67, 24, 255, 0.15)"},
+            {"hex": "#FF7D00", "rgba": "rgba(255, 125, 0, 0.15)"},
+            {"hex": "#01B574", "rgba": "rgba(1, 181, 116, 0.15)"},
+        ]
+
+        for col in df_sql.columns[1:]:
+            if pd.api.types.is_numeric_dtype(df_sql[col]):
+                has_numeric = True
+                current_max = df_sql[col].max()
+                if current_max > max_y_value:
+                    max_y_value = current_max
+
+                c = colors[color_idx % len(colors)]
+                col_name_lower = str(col).lower()
+                y_format = (
+                    "%{y:,.2f} ₽"
+                    if "сумм" in col_name_lower or "sum" in col_name_lower
+                    else "%{y:,.0f}"
+                )
+                custom_data_sql = ["SQL|None"] * len(df_sql)
+
+                fig.add_trace(
+                    go.Scatter(
+                        x=df_sql[x_col],
+                        y=df_sql[col],
+                        name=str(col),
+                        mode="lines+markers",
+                        line=dict(width=4, shape="linear", color=c["hex"]),
+                        marker=dict(size=12, color=c["hex"]),
+                        fill="tozeroy",
+                        fillcolor=c["rgba"],
+                        hovertemplate=f"<b>Ось X:</b> %{{x}}<br><b>{str(col)}:</b> {y_format}<extra></extra>",
+                        customdata=custom_data_sql,
+                    )
+                )
+                color_idx += 1
+
+        if not has_numeric:
+            return (
+                dash.no_update,
+                dash.no_update,
+                "⚠️ Нужна хотя бы одна числовая колонка.",
+                dash.no_update,
+            )
+
+        def format_label(label, max_len=35):
+            s = str(label)
+            if len(s) > max_len:
+                words = s.split()
+                if len(words) > 2:
+                    s = (
+                        " ".join(words[: len(words) // 2])
+                        + "<br>"
+                        + " ".join(words[len(words) // 2 :])
+                    )
+            if len(s) > max_len * 2:
+                return s[: max_len * 2] + "..."
+            return s
+
+        x_range = [-0.5, len(df_sql) - 0.5]
+        y_padding = max_y_value * 0.05 if max_y_value > 0 else 10
+        tickvals = df_sql[x_col].tolist()
+        ticktext = [format_label(v) for v in df_sql[x_col]]
+
+        fig = apply_beautiful_layout(
+            fig, theme, x_range=x_range, tickvals=tickvals, ticktext=ticktext
+        )
+        fig.update_yaxes(range=[-y_padding, max_y_value + y_padding])
+        fig.update_layout(xaxis_tickangle=-30)
+
+        return fig, "Аналитика (DuckDB Режим 🚀)", "", sql_insight
+    except Exception as e:
+        return (
+            dash.no_update,
+            dash.no_update,
+            f"❌ Ошибка DuckDB: {str(e)}",
+            dash.no_update,
+        )
+
+
 # --- ЭКСПОРТ EXCEL И КЛИЕНТСКИЕ КОЛЛБЭКИ ---
 @app.callback(
     Output("download-xlsx", "data"),
@@ -2348,6 +3128,136 @@ app.clientside_callback(
 )
 def reset_heatmap_selection(n_clicks):
     return None
+
+
+app.clientside_callback(
+    "function(n, c) { if(!n) return window.dash_clientside.no_update; const t = c === 'light' ? 'dark' : 'light'; document.documentElement.setAttribute('data-theme', t); return t; }",
+    Output("theme-store", "data"),
+    Input("theme-toggle", "n_clicks"),
+    State("theme-store", "data"),
+)
+
+
+@app.callback(Output("theme-icon", "className"), Input("theme-store", "data"))
+def update_icon(theme):
+    return "fas fa-sun" if theme == "dark" else "fas fa-moon"
+
+
+app.clientside_callback(
+    "function(n) { if (n) { var e = document.getElementById('pdf-export-container'); var w = e.offsetWidth; var h = e.offsetHeight; html2pdf().set({margin: 20, filename: 'Clinical_Chart.pdf', image: { type: 'jpeg', quality: 1.0 }, html2canvas: { scale: 2, useCORS: true, logging: false }, jsPDF: { unit: 'px', format: [w + 40, h + 40], orientation: 'landscape' }}).from(e).save(); } return window.dash_clientside.no_update; }",
+    Output("btn-pdf", "id"),
+    Input("btn-pdf", "n_clicks"),
+    prevent_initial_call=True,
+)
+app.clientside_callback(
+    r"""function(sql_text) { if (!sql_text || sql_text.trim() === "") return ["", {"display": "none"}]; var warnings = []; var text = sql_text.trim(); if (!text.endsWith(';')) warnings.push("⚠️ Забыта точка с запятой ( ; ) в конце"); var openParens = (text.match(/\(/g) || []).length; var closeParens = (text.match(/\)/g) || []).length; if (openParens !== closeParens) warnings.push("⚠️ Незакрытые круглые скобки ( )"); var openBrackets = (text.match(/\[/g) || []).length; var closeBrackets = (text.match(/\]/g) || []).length; if (openBrackets !== closeBrackets) warnings.push("⚠️ Незакрытые квадратные скобки [ ]"); var singleQuotes = (text.match(/'/g) || []).length; if (singleQuotes % 2 !== 0) warnings.push("⚠️ Пропущена одинарная кавычка '"); var baseStyle = {"marginTop": "8px", "fontSize": "13px", "fontWeight": "600", "minHeight": "20px", "transition": "color 0.3s ease"}; if (warnings.length > 0) { baseStyle["color"] = "#FF7D00"; return [warnings.join("   |   "), baseStyle]; } else { baseStyle["color"] = "#01B574"; return ["✅ Синтаксис выглядит отлично!", baseStyle]; } }""",
+    [Output("sql-modal-linter", "children"), Output("sql-modal-linter", "style")],
+    Input("sql-modal-input", "value"),
+    prevent_initial_call=False,
+)
+
+
+@app.callback(
+    [
+        Output("sql-editor-modal", "is_open"),
+        Output("sql-modal-input", "value"),
+        Output("sql-input", "value"),
+    ],
+    [
+        Input("btn-expand-sql", "n_clicks"),
+        Input("btn-save-sql-modal", "n_clicks"),
+        Input("btn-close-sql-modal", "n_clicks"),
+    ],
+    [
+        State("sql-editor-modal", "is_open"),
+        State("sql-input", "value"),
+        State("sql-modal-input", "value"),
+    ],
+    prevent_initial_call=True,
+)
+def toggle_sql_editor(exp, save, close, is_open, main_text, modal_text):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return is_open, dash.no_update, dash.no_update
+    trig = ctx.triggered[0]["prop_id"].split(".")[0]
+    if trig == "btn-expand-sql":
+        return True, main_text, dash.no_update
+    elif trig == "btn-save-sql-modal":
+        return False, dash.no_update, modal_text
+    elif trig == "btn-close-sql-modal":
+        return False, dash.no_update, dash.no_update
+    return is_open, dash.no_update, dash.no_update
+
+
+@app.callback(
+    [
+        Output("presets-store", "data"),
+        Output("dropdown-load-preset", "options"),
+        Output("preset-msg", "children"),
+    ],
+    [Input("btn-save-preset", "n_clicks")],
+    [
+        State("input-preset-name", "value"),
+        State("presets-store", "data"),
+        State("f-year", "value"),
+        State("f-quarter", "value"),
+        State("f-month", "value"),
+        State("f-dept", "value"),
+        State("f-profile", "value"),
+        State("f-mes", "value"),
+    ],
+    prevent_initial_call=True,
+)
+def save_preset(
+    n_clicks, name, store_data, years, quarters, months, depts, profiles, mes
+):
+    if not name or name.strip() == "":
+        return dash.no_update, dash.no_update, "❌ Введите название пресета!"
+    store_data = store_data or {}
+    store_data[name] = {
+        "years": years,
+        "quarters": quarters,
+        "months": months,
+        "depts": depts,
+        "profiles": profiles,
+        "mes": mes,
+    }
+    options = [{"label": k, "value": k} for k in store_data.keys()]
+    return store_data, options, f"✅ Сценарий «{name}» успешно сохранен!"
+
+
+@app.callback(
+    [
+        Output("f-year", "value"),
+        Output("f-quarter", "value"),
+        Output("f-month", "value"),
+        Output("f-dept", "value"),
+        Output("f-profile", "value"),
+        Output("f-mes", "value"),
+    ],
+    [Input("dropdown-load-preset", "value")],
+    [State("presets-store", "data")],
+    prevent_initial_call=True,
+)
+def load_preset(selected_preset, store_data):
+    if not selected_preset or not store_data or selected_preset not in store_data:
+        return (
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+        )
+    p = store_data[selected_preset]
+    return (
+        p.get("years"),
+        p.get("quarters"),
+        p.get("months"),
+        p.get("depts"),
+        p.get("profiles"),
+        p.get("mes"),
+    )
 
 
 def open_browser():
