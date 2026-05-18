@@ -14,6 +14,34 @@ import duckdb
 import dash_ag_grid as dag
 from openpyxl.styles import PatternFill
 from flask_caching import Cache
+import cProfile
+import pstats
+import io
+from functools import wraps
+
+
+
+def profile_to_txt(filename):
+    """Декоратор для записи результатов профилирования в txt-файл"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            profiler = cProfile.Profile()
+            profiler.enable()
+            
+            result = func(*args, **kwargs)
+            
+            profiler.disable()
+            s = io.StringIO()
+            ps = pstats.Stats(profiler, stream=s).sort_stats('cumulative')
+            ps.print_stats(50)
+            
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write(s.getvalue())
+                
+            return result
+        return wrapper
+    return decorator
 
 # --- КОНФИГУРАЦИЯ И КОНСТАНТЫ ---
 DB_NAME = "database.db"
@@ -616,6 +644,8 @@ app.layout = html.Div(
                         dcc.Dropdown(id="f-mes", multi=True, placeholder="Все коды..."),
                     ]
                 ),
+                dbc.Button([html.I(className="fas fa-check", style={"marginRight": "10px"}), "Применить фильтры"], id="btn-apply-filters", style={"width": "100%", "backgroundColor": "#01B574", "border": "none", "borderRadius": "16px", "padding": "14px", "fontWeight": "600", "marginTop": "25px", "boxShadow": "0px 10px 20px rgba(1, 181, 116, 0.2)"}),
+                dbc.Button([html.I(className="fas fa-trash-alt", style={"marginRight": "10px"}), "Сбросить все фильтры"], id="btn-reset-all-filters", style={"width": "100%", "backgroundColor": "transparent", "border": "2px solid #E11D48", "color": "#E11D48", "borderRadius": "16px", "padding": "14px", "fontWeight": "600", "marginTop": "10px"}),
                 dbc.Button(
                     [
                         html.I(
@@ -852,7 +882,6 @@ app.layout = html.Div(
                                                         )
                                                     ]
                                                 ),
-                                                # ВОССТАНОВЛЕННАЯ ВЕРСТКА SQL ПЕСОЧНИЦЫ
                                                 dbc.Row(
                                                     className="mt-4 no-print",
                                                     children=[
@@ -1210,52 +1239,13 @@ app.layout = html.Div(
                                                 dbc.Col(
                                                     html.Div(
                                                         [
-                                                            html.Div(
-                                                                [
-                                                                    html.H4(
-                                                                        [
-                                                                            html.I(
-                                                                                className="fas fa-table",
-                                                                                style={
-                                                                                    "color": "#01B574",
-                                                                                    "marginRight": "12px",
-                                                                                },
-                                                                            ),
-                                                                            "Сводная таблица (Конструктор)",
-                                                                        ],
-                                                                        style={
-                                                                            "fontWeight": "800",
-                                                                            "margin": "0",
-                                                                        },
-                                                                    ),
-                                                                    html.Button(
-                                                                        [
-                                                                            html.I(
-                                                                                className="fas fa-times",
-                                                                                style={
-                                                                                    "marginRight": "8px"
-                                                                                },
-                                                                            ),
-                                                                            "Сбросить фильтр",
-                                                                        ],
-                                                                        id="btn-reset-crossfilter",
-                                                                        style={
-                                                                            "background": "rgba(225, 29, 72, 0.1)",
-                                                                            "border": "1px solid #E11D48",
-                                                                            "color": "#E11D48",
-                                                                            "borderRadius": "8px",
-                                                                            "padding": "6px 12px",
-                                                                            "fontWeight": "600",
-                                                                        },
-                                                                    ),
-                                                                ],
-                                                                style={
-                                                                    "display": "flex",
-                                                                    "justifyContent": "space-between",
-                                                                    "alignItems": "center",
-                                                                    "marginBottom": "15px",
-                                                                },
-                                                            ),
+                                                            html.Div([
+                                                                html.H4([html.I(className="fas fa-table", style={"color": "#01B574", "marginRight": "12px"}), "Сводная таблица (Конструктор)"], style={"fontWeight": "800", "margin": "0"}),
+                                                                html.Div([
+                                                                    html.Button([html.I(className="fas fa-times", style={"marginRight": "8px"}), "Сбросить фильтр"], id="btn-reset-crossfilter", style={"background": "rgba(225, 29, 72, 0.1)", "border": "1px solid #E11D48", "color": "#E11D48", "borderRadius": "8px", "padding": "6px 12px", "fontWeight": "600", "marginRight": "15px"}),
+                                                                    html.Button(html.I(className="fas fa-file-csv"), id="btn-export-grid", title="Скачать таблицу (CSV)", className="no-print", style={"background": "transparent", "border": "none", "fontSize": "22px", "color": "#01B574", "cursor": "pointer"})
+                                                                ], style={"display": "flex", "alignItems": "center"})
+                                                            ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "15px"}),
                                                             html.Div(
                                                                 id="crossfilter-msg",
                                                                 style={
@@ -1694,288 +1684,134 @@ app.layout = html.Div(
 def to_tuple(val):
     return tuple(val) if isinstance(val, list) else val
 
+def clean_sqls(lst):
+    return ", ".join([f"'{str(x).replace(chr(39), chr(39)+chr(39))}'" for x in lst])
+
+def build_where_clause(years, quarters, months, depts, profiles, mes_list, patient=None):
+    """Генератор SQL-условий для мгновенной DuckDB фильтрации (Zero-Copy)"""
+    conditions = ["1=1"]
+    if years: conditions.append(f'"Year" IN ({", ".join(map(str, years))})')
+    if quarters: conditions.append(f'"Quarter_Name" IN ({clean_sqls(quarters)})')
+    if months: conditions.append(f'"Month_Name" IN ({clean_sqls(months)})')
+    if depts: conditions.append(f'"Наименование отделения" IN ({clean_sqls(depts)})')
+    if profiles: conditions.append(f'"Наименование профиля" IN ({clean_sqls(profiles)})')
+    if mes_list: conditions.append(f'"Код Услуги" IN ({clean_sqls(mes_list)})')
+    if patient and str(patient).strip() != "":
+        safe_pat = str(patient).strip().replace("'", "''")
+        conditions.append(f'CAST("Номер ИБ" AS VARCHAR) ILIKE \'%{safe_pat}%\'')
+    return " AND ".join(conditions)
+
 
 @cache.memoize(timeout=600)
-def build_tab_1_data(
-    years,
-    quarters,
-    months,
-    depts,
-    profiles,
-    mes_list,
-    patient,
-    metric,
-    group_by_col,
-    theme,
-    yoy_toggle,
-):
+def build_tab_1_data(years, quarters, months, depts, profiles, mes_list, patient, metric, group_by_col, theme, yoy_toggle):
     df = get_optimized_data()
-    if df.empty:
-        return go.Figure(), "Аналитика", "0 ₽", "0", "0", "0", html.Div("Нет данных")
+    if df.empty: return go.Figure(), "Аналитика", "0 ₽", "0", "0", "0", html.Div("Нет данных")
 
-    mask = pd.Series(True, index=df.index)
-    if years:
-        mask &= df["Year"].isin(years)
-    if quarters:
-        mask &= df["Quarter_Name"].isin(quarters)
-    if months:
-        mask &= df["Month_Name"].isin(months)
-    if depts:
-        mask &= df["Наименование отделения"].isin(depts)
-    if profiles:
-        mask &= df["Наименование профиля"].isin(profiles)
-    if mes_list:
-        mask &= df["Код Услуги"].isin(mes_list)
-    if patient and "Номер ИБ" in df.columns:
-        mask &= df["Номер ИБ"].astype(str).str.contains(str(patient), case=False)
-
-    filtered_df = df[mask]
-
-    total_sum = duckdb.query("SELECT SUM(Сумма) FROM filtered_df").fetchone()[0] or 0
-    total_patients = (
-        duckdb.query(
-            'SELECT COUNT(DISTINCT "ИД пациента в версии счета") FROM filtered_df'
-        ).fetchone()[0]
-        or 0
-    )
-    total_mes = duckdb.query("SELECT COUNT(*) FROM filtered_df").fetchone()[0] or 0
-    active_depts = (
-        duckdb.query(
-            'SELECT COUNT(DISTINCT "Наименование отделения") FROM filtered_df'
-        ).fetchone()[0]
-        or 0
-    )
-
-    str_total_sum = f"{total_sum:,.2f} ₽".replace(",", " ").replace(".", ",")
-    str_total_patients = str(total_patients)
-    str_total_mes = str(total_mes)
-    str_active_depts = str(active_depts)
+    where_clause = build_where_clause(years, quarters, months, depts, profiles, mes_list, patient)
+    
+    total_sum = duckdb.query(f"SELECT SUM(Сумма) FROM df WHERE {where_clause}").fetchone()[0] or 0
+    total_patients = duckdb.query(f'SELECT COUNT(DISTINCT "ИД пациента в версии счета") FROM df WHERE {where_clause}').fetchone()[0] or 0
+    total_mes = duckdb.query(f"SELECT COUNT(*) FROM df WHERE {where_clause}").fetchone()[0] or 0
+    active_depts = duckdb.query(f'SELECT COUNT(DISTINCT "Наименование отделения") FROM df WHERE {where_clause}').fetchone()[0] or 0
 
     fig = go.Figure()
     x_range, tickvals, ticktext = None, [], []
     insight_html = html.Div()
 
-    if not filtered_df.empty and "dt" in filtered_df.columns:
-        x_range = [
-            filtered_df["dt"].min() - pd.Timedelta(days=3),
-            filtered_df["dt"].max() + pd.Timedelta(days=3),
-        ]
-        unique_dates = sorted(filtered_df["dt"].unique())
+    dates_info = duckdb.query(f"SELECT MIN(dt), MAX(dt) FROM df WHERE {where_clause}").fetchone()
+    
+    if dates_info[0] is not None:
+        min_dt, max_dt = pd.Timestamp(dates_info[0]), pd.Timestamp(dates_info[1])
+        x_range = [min_dt - pd.Timedelta(days=3), max_dt + pd.Timedelta(days=3)]
+        
+        unique_dates_df = duckdb.query(f"SELECT DISTINCT dt FROM df WHERE {where_clause} AND dt IS NOT NULL ORDER BY dt").df()
+        unique_dates = unique_dates_df['dt'].tolist()
         tickvals = unique_dates
-        ticktext = [
-            f"{MONTHS_RU[pd.Timestamp(d).month]} {pd.Timestamp(d).year}"
-            for d in unique_dates
-        ]
+        ticktext = [f"{MONTHS_RU[pd.Timestamp(d).month]} {pd.Timestamp(d).year}" for d in unique_dates]
 
-        if group_by_col in filtered_df.columns:
-            if metric == "sum":
-                query = f'SELECT dt, "{group_by_col}", SUM(Сумма) as val FROM filtered_df GROUP BY dt, "{group_by_col}"'
-            elif metric == "count_patients":
-                query = f'SELECT dt, "{group_by_col}", COUNT(DISTINCT "ИД пациента в версии счета") as val FROM filtered_df GROUP BY dt, "{group_by_col}"'
-            else:
-                query = f'SELECT dt, "{group_by_col}", COUNT(*) as val FROM filtered_df GROUP BY dt, "{group_by_col}"'
-
-            trend = duckdb.query(query).df().sort_values("dt")
+        if group_by_col in df.columns:
+            if metric == "sum": query = f'SELECT dt, "{group_by_col}", SUM(Сумма) as val FROM df WHERE {where_clause} GROUP BY dt, "{group_by_col}"'
+            elif metric == "count_patients": query = f'SELECT dt, "{group_by_col}", COUNT(DISTINCT "ИД пациента в версии счета") as val FROM df WHERE {where_clause} GROUP BY dt, "{group_by_col}"'
+            else: query = f'SELECT dt, "{group_by_col}", COUNT(*) as val FROM df WHERE {where_clause} GROUP BY dt, "{group_by_col}"'
+            
+            trend = duckdb.query(query).df().sort_values('dt')
             top_query = f'SELECT "{group_by_col}" FROM trend GROUP BY "{group_by_col}" ORDER BY SUM(val) DESC LIMIT 5'
             top_groups = [row[0] for row in duckdb.query(top_query).fetchall()]
 
-            colors = [
-                {"hex": "#4318FF", "rgba": "rgba(67, 24, 255, 0.15)"},
-                {"hex": "#FF7D00", "rgba": "rgba(255, 125, 0, 0.15)"},
-                {"hex": "#01B574", "rgba": "rgba(1, 181, 116, 0.15)"},
-                {"hex": "#39B8FF", "rgba": "rgba(57, 184, 255, 0.15)"},
-                {"hex": "#E11D48", "rgba": "rgba(225, 29, 72, 0.15)"},
-            ]
+            colors = [{"hex": "#4318FF", "rgba": "rgba(67, 24, 255, 0.15)"}, {"hex": "#FF7D00", "rgba": "rgba(255, 125, 0, 0.15)"}, {"hex": "#01B574", "rgba": "rgba(1, 181, 116, 0.15)"}, {"hex": "#39B8FF", "rgba": "rgba(57, 184, 255, 0.15)"}, {"hex": "#E11D48", "rgba": "rgba(225, 29, 72, 0.15)"}]
 
             for i, group_val in enumerate(top_groups):
                 g_data = trend[trend[group_by_col] == group_val]
                 c = colors[i % len(colors)]
-
                 custom_data_formatted = [f"STD|{group_val}"] * len(g_data)
-
-                fig.add_trace(
-                    go.Scatter(
-                        x=g_data["dt"],
-                        y=g_data["val"],
-                        name=str(group_val)[:32] + "...",
-                        mode="lines+markers",
-                        line=dict(
-                            width=4, shape="spline", smoothing=1.3, color=c["hex"]
-                        ),
-                        marker=dict(size=12, color=c["hex"]),
-                        fill="tozeroy",
-                        fillcolor=c["rgba"],
-                        customdata=custom_data_formatted,
-                    )
-                )
-
-        # ВОССТАНОВЛЕННАЯ ЛОГИКА ПРОЦЕНТОВ (СВОДКА)
+                
+                fig.add_trace(go.Scatter(
+                    x=g_data['dt'], y=g_data['val'], name=str(group_val)[:32] + "...", mode='lines+markers',
+                    line=dict(width=4, shape='spline', smoothing=1.3, color=c["hex"]), marker=dict(size=12, color=c["hex"]),
+                    fill='tozeroy', fillcolor=c["rgba"], customdata=custom_data_formatted
+                ))
+                
+        # Сводка (Проценты)
         if not trend.empty:
             if metric == "sum":
-                monthly = duckdb.query(
-                    "SELECT Month_Str, SUM(Сумма) as val FROM filtered_df GROUP BY Month_Str ORDER BY Month_Str"
-                ).df()
-                lbl = "Общая сумма"
-                fmt = lambda x: f"{x:,.2f} ₽".replace(",", " ")
+                monthly = duckdb.query(f'SELECT Month_Str, SUM(Сумма) as val FROM df WHERE {where_clause} GROUP BY Month_Str ORDER BY Month_Str').df()
+                lbl, fmt = "Общая сумма", lambda x: f"{x:,.2f} ₽".replace(',',' ')
             elif metric == "count_patients":
-                monthly = duckdb.query(
-                    'SELECT Month_Str, COUNT(DISTINCT "ИД пациента в версии счета") as val FROM filtered_df GROUP BY Month_Str ORDER BY Month_Str'
-                ).df()
-                lbl = "Уникальные пациенты"
-                fmt = lambda x: f"{x:,.0f} чел.".replace(",", " ")
+                monthly = duckdb.query(f'SELECT Month_Str, COUNT(DISTINCT "ИД пациента в версии счета") as val FROM df WHERE {where_clause} GROUP BY Month_Str ORDER BY Month_Str').df()
+                lbl, fmt = "Уникальные пациенты", lambda x: f"{x:,.0f} чел.".replace(',',' ')
             else:
-                monthly = duckdb.query(
-                    "SELECT Month_Str, COUNT(*) as val FROM filtered_df GROUP BY Month_Str ORDER BY Month_Str"
-                ).df()
-                lbl = "Оказано услуг"
-                fmt = lambda x: f"{x:,.0f} ед.".replace(",", " ")
+                monthly = duckdb.query(f'SELECT Month_Str, COUNT(*) as val FROM df WHERE {where_clause} GROUP BY Month_Str ORDER BY Month_Str').df()
+                lbl, fmt = "Оказано услуг", lambda x: f"{x:,.0f} ед.".replace(',',' ')
 
             if len(monthly) >= 2:
-                val_first = monthly.iloc[0]["val"]
-                val_last = monthly.iloc[-1]["val"]
+                val_first, val_last = monthly.iloc[0]['val'], monthly.iloc[-1]['val']
                 diff = val_last - val_first
                 pct = (diff / val_first * 100) if val_first > 0 else 0
-
-                color = "#01B574" if diff >= 0 else "#E11D48"
-                icon = "fa-arrow-up" if diff >= 0 else "fa-arrow-down"
-                sign = "+" if diff >= 0 else ""
-
-                insight_html = html.Div(
-                    [
-                        html.Div(
-                            [
-                                html.I(
-                                    className="fas fa-robot",
-                                    style={
-                                        "marginRight": "8px",
-                                        "color": "var(--primary)",
-                                    },
-                                ),
-                                html.B("Сводка:"),
-                            ],
-                            style={"marginBottom": "10px", "fontSize": "16px"},
-                        ),
-                        html.Span(
-                            f"Показатель «{lbl}» изменился с {fmt(val_first)} до {fmt(val_last)}. Разница: "
-                        ),
-                        html.Span(
-                            [
-                                html.I(
-                                    className=f"fas {icon}",
-                                    style={"marginRight": "5px"},
-                                ),
-                                f"{sign}{fmt(diff)} ({sign}{pct:.1f}%)",
-                            ],
-                            style={
-                                "color": color,
-                                "fontWeight": "800",
-                                "backgroundColor": f"{color}20",
-                                "padding": "4px 8px",
-                                "borderRadius": "6px",
-                                "marginLeft": "8px",
-                            },
-                        ),
-                    ]
-                )
+                color, icon, sign = ("#01B574", "fa-arrow-up", "+") if diff >= 0 else ("#E11D48", "fa-arrow-down", "")
+                insight_html = html.Div([
+                    html.Div([html.I(className="fas fa-robot", style={"marginRight": "8px", "color": "var(--primary)"}), html.B("Сводка:")], style={"marginBottom": "10px", "fontSize": "16px"}),
+                    html.Span(f"Показатель «{lbl}» изменился с {fmt(val_first)} до {fmt(val_last)}. Разница: "),
+                    html.Span([html.I(className=f"fas {icon}", style={"marginRight": "5px"}), f"{sign}{fmt(diff)} ({sign}{pct:.1f}%)"], style={"color": color, "fontWeight": "800", "backgroundColor": f"{color}20", "padding": "4px 8px", "borderRadius": "6px", "marginLeft": "8px"})
+                ])
 
     fig = apply_beautiful_layout(fig, theme, x_range, tickvals, ticktext)
     fig.update_xaxes(rangeslider_visible=False)
-
-    return (
-        fig,
-        "Аналитика по времени",
-        str_total_sum,
-        str_total_patients,
-        str_total_mes,
-        str_active_depts,
-        insight_html,
-    )
+    str_total_sum = f"{total_sum:,.2f} ₽".replace(",", " ").replace(".", ",")
+    
+    return fig, "Аналитика по времени", str_total_sum, str(total_patients), str(total_mes), str(active_depts), insight_html
 
 
 @cache.memoize(timeout=600)
-def build_tab_2_data(
-    years, quarters, months, depts, profiles, mes_list, patient, metric, theme
-):
+def build_tab_2_data(years, quarters, months, depts, profiles, mes_list, patient, metric, theme):
     df = get_optimized_data()
-    if df.empty:
-        return go.Figure(), go.Figure()
+    if df.empty: return go.Figure(), go.Figure()
 
-    mask = pd.Series(True, index=df.index)
-    if years:
-        mask &= df["Year"].isin(years)
-    if quarters:
-        mask &= df["Quarter_Name"].isin(quarters)
-    if months:
-        mask &= df["Month_Name"].isin(months)
-    if depts:
-        mask &= df["Наименование отделения"].isin(depts)
-    if profiles:
-        mask &= df["Наименование профиля"].isin(profiles)
-    if mes_list:
-        mask &= df["Код Услуги"].isin(mes_list)
-    if patient and "Номер ИБ" in df.columns:
-        mask &= df["Номер ИБ"].astype(str).str.contains(str(patient), case=False)
-
-    filtered_df = df[mask]
+    where_clause = build_where_clause(years, quarters, months, depts, profiles, mes_list, patient)
     sunburst_fig, heatmap_fig = go.Figure(), go.Figure()
 
-    if not filtered_df.empty:
-        if (
-            "Month_Str" in filtered_df.columns
-            and "Наименование отделения" in filtered_df.columns
-        ):
-            if metric == "sum":
-                query_hm = 'SELECT "Наименование отделения", "Month_Str", SUM(Сумма) as val FROM filtered_df GROUP BY "Наименование отделения", "Month_Str"'
-            elif metric == "count_patients":
-                query_hm = 'SELECT "Наименование отделения", "Month_Str", COUNT(DISTINCT "ИД пациента в версии счета") as val FROM filtered_df GROUP BY "Наименование отделения", "Month_Str"'
-            else:
-                query_hm = 'SELECT "Наименование отделения", "Month_Str", COUNT(*) as val FROM filtered_df GROUP BY "Наименование отделения", "Month_Str"'
-
+    has_data = duckdb.query(f"SELECT COUNT(*) FROM df WHERE {where_clause}").fetchone()[0] > 0
+    if has_data:
+        if 'Month_Str' in df.columns and 'Наименование отделения' in df.columns:
+            if metric == "sum": query_hm = f'SELECT "Наименование отделения", "Month_Str", SUM(Сумма) as val FROM df WHERE {where_clause} GROUP BY "Наименование отделения", "Month_Str"'
+            elif metric == "count_patients": query_hm = f'SELECT "Наименование отделения", "Month_Str", COUNT(DISTINCT "ИД пациента в версии счета") as val FROM df WHERE {where_clause} GROUP BY "Наименование отделения", "Month_Str"'
+            else: query_hm = f'SELECT "Наименование отделения", "Month_Str", COUNT(*) as val FROM df WHERE {where_clause} GROUP BY "Наименование отделения", "Month_Str"'
+                
             hm_data = duckdb.query(query_hm).df()
-            pivot = hm_data.pivot(
-                index="Наименование отделения", columns="Month_Str", values="val"
-            ).fillna(0)
-
-            heatmap_fig.add_trace(
-                go.Heatmap(
-                    z=pivot.values,
-                    x=pivot.columns,
-                    y=pivot.index,
-                    colorscale="Blues" if theme == "light" else "Viridis",
-                )
-            )
+            pivot = hm_data.pivot(index='Наименование отделения', columns='Month_Str', values='val').fillna(0)
+            heatmap_fig.add_trace(go.Heatmap(z=pivot.values, x=pivot.columns, y=pivot.index, colorscale="Blues" if theme == "light" else "Viridis"))
             heatmap_fig = apply_beautiful_layout(heatmap_fig, theme)
-            heatmap_fig.update_layout(
-                height=max(400, (len(pivot.index) * 35) + 150),
-                xaxis=dict(showgrid=False, type="category"),
-                yaxis=dict(showgrid=False, automargin=True, tickfont=dict(size=11)),
-            )
+            heatmap_fig.update_layout(height=max(400, (len(pivot.index) * 35) + 150), xaxis=dict(showgrid=False, type='category'), yaxis=dict(showgrid=False, automargin=True, tickfont=dict(size=11)))
 
-        if set(
-            ["Наименование отделения", "Наименование профиля", "Код Услуги"]
-        ).issubset(filtered_df.columns):
-            query_tree = """SELECT "Наименование отделения", "Наименование профиля", "Код Услуги", SUM(Сумма) as Сумма, COUNT(*) as count_val FROM filtered_df GROUP BY "Наименование отделения", "Наименование профиля", "Код Услуги" """
+        if set(['Наименование отделения', 'Наименование профиля', 'Код Услуги']).issubset(df.columns):
+            query_tree = f"""SELECT "Наименование отделения", "Наименование профиля", "Код Услуги", SUM(Сумма) as Сумма, COUNT(*) as count_val FROM df WHERE {where_clause} GROUP BY "Наименование отделения", "Наименование профиля", "Код Услуги" """
             df_sun = duckdb.query(query_tree).df().fillna("Неизвестно")
-
-            sort_col = "Сумма" if metric == "sum" else "count_val"
+            
+            sort_col = 'Сумма' if metric == "sum" else 'count_val'
             df_sun = df_sun.nlargest(150, sort_col)
-            val_col = "Сумма" if metric == "sum" else "count_val"
-            sunburst_fig = px.treemap(
-                df_sun,
-                path=["Наименование отделения", "Наименование профиля", "Код Услуги"],
-                values=val_col,
-                color="Сумма" if metric == "sum" else None,
-                color_continuous_scale="Blues",
-            )
-            sunburst_fig.update_traces(
-                maxdepth=2,
-                pathbar=dict(visible=True, textfont=dict(size=15, family="Inter")),
-                root_color="#e9edf7",
-                marker=dict(line=dict(width=1.5, color="#ffffff")),
-            )
-            sunburst_fig.update_layout(
-                margin=dict(t=45, l=10, r=10, b=10), paper_bgcolor="rgba(0,0,0,0)"
-            )
+            val_col = 'Сумма' if metric == "sum" else 'count_val'
+            sunburst_fig = px.treemap(df_sun, path=['Наименование отделения', 'Наименование профиля', 'Код Услуги'], values=val_col, color='Сумма' if metric == 'sum' else None, color_continuous_scale='Blues')
+            sunburst_fig.update_traces(maxdepth=2, pathbar=dict(visible=True, textfont=dict(size=15, family="Inter")), root_color="#e9edf7", marker=dict(line=dict(width=1.5, color="#ffffff")))
+            sunburst_fig.update_layout(margin=dict(t=45, l=10, r=10, b=10), paper_bgcolor="rgba(0,0,0,0)")
 
     return sunburst_fig, heatmap_fig
 
@@ -2073,229 +1909,133 @@ def update_smart_filters(years, quarters, months, depts, profiles, mes_list, pat
 # 🚀 1. Вкладка 1 (График + KPI)
 @app.callback(
     [
-        Output("main-line-chart", "figure"),
-        Output("main-chart-title", "children"),
-        Output("kpi-sum", "children"),
-        Output("kpi-patients", "children"),
-        Output("kpi-mes", "children"),
-        Output("kpi-depts", "children"),
-        Output("smart-insights-container", "children"),
+        Output("main-line-chart", "figure"), Output("main-chart-title", "children"), Output("kpi-sum", "children"),
+        Output("kpi-patients", "children"), Output("kpi-mes", "children"), Output("kpi-depts", "children"),
+        Output("smart-insights-container", "children")
     ],
     [
-        Input("f-year", "value"),
-        Input("f-quarter", "value"),
-        Input("f-month", "value"),
-        Input("f-dept", "value"),
-        Input("f-profile", "value"),
-        Input("f-mes", "value"),
-        Input("f-patient", "value"),
-        Input("f-metric", "value"),
-        Input("f-group-by", "value"),
-        Input("theme-store", "data"),
-        Input("f-yoy", "value"),
+        Input("btn-apply-filters", "n_clicks"),
+        Input("btn-reset-all-filters", "n_clicks"),
         Input("main-tabs", "active_tab"),
+        Input("theme-store", "data")
     ],
+    [
+        State("f-year", "value"), State("f-quarter", "value"), State("f-month", "value"), State("f-dept", "value"),
+        State("f-profile", "value"), State("f-mes", "value"), State("f-patient", "value"), State("f-metric", "value"), 
+        State("f-group-by", "value"), State("f-yoy", "value")
+    ]
 )
-def update_tab_1_router(
-    years,
-    quarters,
-    months,
-    depts,
-    profiles,
-    mes_list,
-    patient,
-    metric,
-    group_by_col,
-    theme,
-    yoy_toggle,
-    active_tab,
-):
+def update_tab_1_router(n_clicks_apply, n_clicks_reset, active_tab, theme, years, quarters, months, depts, profiles, mes_list, patient, metric, group_by_col, yoy_toggle):
     if active_tab != "tab-main":
-        return (
-            dash.no_update,
-            dash.no_update,
-            dash.no_update,
-            dash.no_update,
-            dash.no_update,
-            dash.no_update,
-            dash.no_update,
-        )
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
-    return build_tab_1_data(
-        to_tuple(years),
-        to_tuple(quarters),
-        to_tuple(months),
-        to_tuple(depts),
-        to_tuple(profiles),
-        to_tuple(mes_list),
-        patient,
-        metric,
-        group_by_col,
-        theme,
-        to_tuple(yoy_toggle),
-    )
+    ctx = dash.callback_context
+    trig = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
+    
+    if trig == "btn-reset-all-filters":
+        years, quarters, months, depts, profiles, mes_list, patient, yoy_toggle = None, None, None, None, None, None, "", []
+    
+    return build_tab_1_data(to_tuple(years), to_tuple(quarters), to_tuple(months), to_tuple(depts), to_tuple(profiles), to_tuple(mes_list), patient, metric, group_by_col, theme, to_tuple(yoy_toggle))
 
 
 # 🚀 2. Вкладка 2 (Дерево + Хитмап)
 @app.callback(
     [Output("sunburst-chart", "figure"), Output("heatmap-chart", "figure")],
     [
-        Input("f-year", "value"),
-        Input("f-quarter", "value"),
-        Input("f-month", "value"),
-        Input("f-dept", "value"),
-        Input("f-profile", "value"),
-        Input("f-mes", "value"),
-        Input("f-patient", "value"),
-        Input("f-metric", "value"),
-        Input("theme-store", "data"),
+        Input("btn-apply-filters", "n_clicks"),
+        Input("btn-reset-all-filters", "n_clicks"),
         Input("main-tabs", "active_tab"),
+        Input("theme-store", "data")
     ],
+    [
+        State("f-year", "value"), State("f-quarter", "value"), State("f-month", "value"), State("f-dept", "value"),
+        State("f-profile", "value"), State("f-mes", "value"), State("f-patient", "value"), State("f-metric", "value")
+    ]
 )
-def update_tab_2_router(
-    years,
-    quarters,
-    months,
-    depts,
-    profiles,
-    mes_list,
-    patient,
-    metric,
-    theme,
-    active_tab,
-):
+def update_tab_2_router(n_clicks_apply, n_clicks_reset, active_tab, theme, years, quarters, months, depts, profiles, mes_list, patient, metric):
     if active_tab != "tab-beta":
         return dash.no_update, dash.no_update
-
-    return build_tab_2_data(
-        to_tuple(years),
-        to_tuple(quarters),
-        to_tuple(months),
-        to_tuple(depts),
-        to_tuple(profiles),
-        to_tuple(mes_list),
-        patient,
-        metric,
-        theme,
-    )
+        
+    ctx = dash.callback_context
+    trig = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
+    
+    if trig == "btn-reset-all-filters":
+        years, quarters, months, depts, profiles, mes_list, patient = None, None, None, None, None, None, ""
+        
+    return build_tab_2_data(to_tuple(years), to_tuple(quarters), to_tuple(months), to_tuple(depts), to_tuple(profiles), to_tuple(mes_list), patient, metric, theme)
 
 
 # 🚀 3. Таблица
 @app.callback(
     [Output("ag-grid-container", "children"), Output("crossfilter-msg", "children")],
     [
-        Input("f-year", "value"),
-        Input("f-quarter", "value"),
-        Input("f-month", "value"),
-        Input("f-dept", "value"),
-        Input("f-profile", "value"),
-        Input("f-mes", "value"),
-        Input("f-patient", "value"),
+        Input("btn-apply-filters", "n_clicks"),
+        Input("btn-reset-all-filters", "n_clicks"),
         Input("heatmap-chart", "clickData"),
-        Input("theme-store", "data"),
         Input("main-tabs", "active_tab"),
+        Input("theme-store", "data")
     ],
+    [
+        State("f-year", "value"), State("f-quarter", "value"), State("f-month", "value"), State("f-dept", "value"),
+        State("f-profile", "value"), State("f-mes", "value"), State("f-patient", "value")
+    ]
 )
-def update_table_only(
-    years,
-    quarters,
-    months,
-    depts,
-    profiles,
-    mes_list,
-    patient,
-    heatmap_click,
-    theme,
-    active_tab,
-):
+
+def update_table_only(n_clicks_apply, n_clicks_reset, heatmap_click, active_tab, theme, years, quarters, months, depts, profiles, mes_list, patient):
     if active_tab != "tab-beta":
         return dash.no_update, dash.no_update
-
+        
+    ctx = dash.callback_context
+    trig = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
+    
+    if trig == "btn-reset-all-filters":
+        years, quarters, months, depts, profiles, mes_list, patient, heatmap_click = None, None, None, None, None, None, "", None
+        
     df = get_optimized_data()
-    if df.empty:
-        return html.Div("Нет данных"), ""
-
-    mask = pd.Series(True, index=df.index)
-    if years:
-        mask &= df["Year"].isin(years)
-    if quarters:
-        mask &= df["Quarter_Name"].isin(quarters)
-    if months:
-        mask &= df["Month_Name"].isin(months)
-    if depts:
-        mask &= df["Наименование отделения"].isin(depts)
-    if profiles:
-        mask &= df["Наименование профиля"].isin(profiles)
-    if mes_list:
-        mask &= df["Код Услуги"].isin(mes_list)
-    if patient and "Номер ИБ" in df.columns:
-        mask &= df["Номер ИБ"].astype(str).str.contains(str(patient), case=False)
-
-    grid_data = df[mask]
     cf_msg = ""
+    where_clause = build_where_clause(years, quarters, months, depts, profiles, mes_list, patient)
 
     if heatmap_click:
-        point = heatmap_click["points"][0]
-        clicked_month = str(point["x"])[:7]
-        clicked_dept = str(point["y"])
-        grid_data = grid_data[
-            (grid_data["Month_Str"] == clicked_month)
-            & (grid_data["Наименование отделения"] == clicked_dept)
-        ]
+        point = heatmap_click['points'][0]
+        clicked_month, clicked_dept = str(point['x'])[:7], str(point['y'])
+        safe_dept = clicked_dept.replace("'", "''")
+        where_clause += f" AND Month_Str = '{clicked_month}' AND \"Наименование отделения\" = '{safe_dept}'"
         cf_msg = f"🔍 Отфильтровано по: {clicked_dept} ({clicked_month})"
 
-    if grid_data.empty:
-        return html.Div("Нет данных"), cf_msg
+    has_data = duckdb.query(f"SELECT COUNT(*) FROM df WHERE {where_clause}").fetchone()[0] > 0
+    if not has_data: return html.Div("Нет данных"), cf_msg
 
-    agg_cols = ["Наименование отделения", "Наименование профиля", "Код Услуги"]
-    agg_cols = [c for c in agg_cols if c in grid_data.columns]
-
-    if "Сумма" in grid_data.columns:
-        grid_df = (
-            grid_data.groupby(agg_cols, observed=True)
-            .agg(Кол_во_услуг=("Период", "count"), Сумма=("Сумма", "sum"))
-            .reset_index()
-        )
-        grid_df["Сумма"] = grid_df["Сумма"].round(2)
+    agg_cols = ['Наименование отделения', 'Наименование профиля', 'Код Услуги', 'Номер ИБ']
+    agg_cols = [c for c in agg_cols if c in df.columns]
+    
+    cols_str = ', '.join([f'"{c}"' for c in agg_cols])
+    if 'Сумма' in df.columns:
+        query = f'SELECT {cols_str}, COUNT(*) as Кол_во_услуг, ROUND(SUM(Сумма), 2) as Сумма FROM df WHERE {where_clause} GROUP BY {cols_str}'
     else:
-        grid_df = (
-            grid_data.groupby(agg_cols, observed=True)
-            .agg(Кол_во_услуг=("Период", "count"))
-            .reset_index()
-        )
+        query = f'SELECT {cols_str}, COUNT(*) as Кол_во_услуг FROM df WHERE {where_clause} GROUP BY {cols_str}'
+        
+    grid_df = duckdb.query(query).df()
 
     column_defs = []
     for col in grid_df.columns:
-        col_def = {
-            "field": col,
-            "sortable": True,
-            "enableRowGroup": True,
-            "enablePivot": True,
-        }
-        if col in ["Кол_во_услуг", "Сумма"]:
+        col_def = {"field": col, "sortable": True, "enableRowGroup": True, "enablePivot": True}
+        if col in ['Кол_во_услуг', 'Сумма']:
             col_def.update({"filter": "agNumberColumnFilter", "enableValue": True})
-            if col == "Сумма":
-                col_def["aggFunc"] = "sum"
+            if col == 'Сумма': col_def["aggFunc"] = "sum"
         else:
             col_def["filter"] = "agSetColumnFilter"
         column_defs.append(col_def)
 
     ag_grid = dag.AgGrid(
-        rowData=grid_df.to_dict("records"),
-        columnDefs=column_defs,
-        defaultColDef={"flex": 1, "minWidth": 150, "floatingFilter": True},
-        className="ag-theme-alpine" if theme == "light" else "ag-theme-alpine-dark",
-        enableEnterpriseModules=True,
-        dashGridOptions={
-            "localeText": AG_GRID_LOCALE_RU,
-            "pagination": True,
-            "paginationPageSize": 15,
-            "rowGroupPanelShow": "always",
-            "sideBar": True,
-        },
-        style={"height": "650px", "width": "100%", "borderRadius": "12px"},
+        id="interactive-grid",
+        rowData=grid_df.to_dict("records"), columnDefs=column_defs, 
+        defaultColDef={"flex": 1, "minWidth": 150, "floatingFilter": True}, 
+        className="ag-theme-alpine" if theme == "light" else "ag-theme-alpine-dark", 
+        enableEnterpriseModules=True, 
+        dashGridOptions={"localeText": AG_GRID_LOCALE_RU, "pagination": True, "paginationPageSize": 15, "rowGroupPanelShow": "always", "sideBar": True}, 
+        style={"height": "650px", "width": "100%", "borderRadius": "12px"}
     )
-
+    
     return ag_grid, cf_msg
 
 
@@ -2303,56 +2043,42 @@ def update_table_only(
 @app.callback(
     [Output("abc-grid-container", "children"), Output("download-abc-xlsx", "data")],
     [
+        Input("btn-apply-filters", "n_clicks"),
+        Input("btn-reset-all-filters", "n_clicks"),
         Input("abc-group-by", "value"),
-        Input("f-year", "value"),
-        Input("f-quarter", "value"),
-        Input("f-month", "value"),
-        Input("f-dept", "value"),
-        Input("f-profile", "value"),
-        Input("f-mes", "value"),
-        Input("theme-store", "data"),
         Input("btn-export-abc", "n_clicks"),
         Input("main-tabs", "active_tab"),
+        Input("theme-store", "data")
     ],
+    [
+        State("f-year", "value"), State("f-quarter", "value"), State("f-month", "value"),
+        State("f-dept", "value"), State("f-profile", "value"), State("f-mes", "value")
+    ]
 )
-def update_abc_analysis(
-    group_by,
-    years,
-    quarters,
-    months,
-    depts,
-    profiles,
-    mes_list,
-    theme,
-    export_clicks,
-    active_tab,
-):
+def update_abc_analysis(n_clicks_apply, n_clicks_reset, group_by, export_clicks, active_tab, theme, years, quarters, months, depts, profiles, mes_list):
     if active_tab != "tab-abc":
         return dash.no_update, dash.no_update
+        
+    ctx = dash.callback_context
+    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
+
+    if triggered_id == "btn-reset-all-filters":
+        years, quarters, months, depts, profiles, mes_list = None, None, None, None, None, None
 
     df = get_optimized_data()
-    ctx = dash.callback_context
-    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
-
-    if df.empty or "Сумма" not in df.columns or group_by not in df.columns:
+    if df.empty or 'Сумма' not in df.columns or group_by not in df.columns:
         return html.Div("Нет данных для ABC анализа"), dash.no_update
 
     mask = pd.Series(True, index=df.index)
-    if years:
-        mask &= df["Year"].isin(years)
-    if quarters:
-        mask &= df["Quarter_Name"].isin(quarters)
-    if months:
-        mask &= df["Month_Name"].isin(months)
-    if depts:
-        mask &= df["Наименование отделения"].isin(depts)
-    if profiles:
-        mask &= df["Наименование профиля"].isin(profiles)
-    if mes_list:
-        mask &= df["Код Услуги"].isin(mes_list)
+    if years: mask &= df['Year'].isin(years)
+    if quarters: mask &= df['Quarter_Name'].isin(quarters)
+    if months: mask &= df['Month_Name'].isin(months)
+    if depts: mask &= df['Наименование отделения'].isin(depts)
+    if profiles: mask &= df['Наименование профиля'].isin(profiles)
+    if mes_list: mask &= df['Код Услуги'].isin(mes_list)
 
     filtered_df = df[mask]
-
+    
     query_abc = f"""
         SELECT "{group_by}", SUM(Сумма) as Сумма, COUNT(*) as Кол_во_услуг
         FROM filtered_df
@@ -2361,90 +2087,53 @@ def update_abc_analysis(
     """
     df_abc = duckdb.query(query_abc).df()
 
-    total_sum = df_abc["Сумма"].sum()
+    total_sum = df_abc['Сумма'].sum()
     if total_sum > 0:
-        df_abc["Доля_выручки"] = df_abc["Сумма"] / total_sum
-        df_abc["Накопленная_доля"] = df_abc["Доля_выручки"].cumsum()
-        df_abc["Группа ABC"] = df_abc["Накопленная_доля"].apply(
-            lambda pct: "A" if pct <= 0.80 else ("B" if pct <= 0.95 else "C")
-        )
-        df_abc["Сумма"] = df_abc["Сумма"].round(2)
-        df_abc["Доля_выручки"] = (df_abc["Доля_выручки"] * 100).round(2).astype(
-            str
-        ) + "%"
-        df_abc["Накопленная_доля"] = (df_abc["Накопленная_доля"] * 100).round(2).astype(
-            str
-        ) + "%"
+        df_abc['Доля_выручки'] = df_abc['Сумма'] / total_sum
+        df_abc['Накопленная_доля'] = df_abc['Доля_выручки'].cumsum()
+        df_abc['Группа ABC'] = df_abc['Накопленная_доля'].apply(lambda pct: 'A' if pct <= 0.80 else ('B' if pct <= 0.95 else 'C'))
+        df_abc['Сумма'] = df_abc['Сумма'].round(2)
+        df_abc['Доля_выручки'] = (df_abc['Доля_выручки'] * 100).round(2).astype(str) + "%"
+        df_abc['Накопленная_доля'] = (df_abc['Накопленная_доля'] * 100).round(2).astype(str) + "%"
     else:
-        df_abc["Доля_выручки"] = "0%"
-        df_abc["Накопленная_доля"] = "0%"
-        df_abc["Группа ABC"] = "C"
+        df_abc['Доля_выручки'] = "0%"
+        df_abc['Накопленная_доля'] = "0%"
+        df_abc['Группа ABC'] = "C"
 
     if triggered_id == "btn-export-abc":
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df_abc.to_excel(writer, index=False, sheet_name="ABC Analysis")
-            worksheet = writer.sheets["ABC Analysis"]
-            fill_a = PatternFill(
-                start_color="CCFFCC", end_color="CCFFCC", fill_type="solid"
-            )
-            fill_b = PatternFill(
-                start_color="FFE5B4", end_color="FFE5B4", fill_type="solid"
-            )
-            fill_c = PatternFill(
-                start_color="FFCCCC", end_color="FFCCCC", fill_type="solid"
-            )
-            abc_col_idx = df_abc.columns.get_loc("Группа ABC") + 1
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df_abc.to_excel(writer, index=False, sheet_name='ABC Analysis')
+            worksheet = writer.sheets['ABC Analysis']
+            fill_a = PatternFill(start_color="CCFFCC", end_color="CCFFCC", fill_type="solid")
+            fill_b = PatternFill(start_color="FFE5B4", end_color="FFE5B4", fill_type="solid")
+            fill_c = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
+            abc_col_idx = df_abc.columns.get_loc('Группа ABC') + 1
 
             for row_idx in range(2, len(df_abc) + 2):
                 group_val = worksheet.cell(row=row_idx, column=abc_col_idx).value
-                fill = (
-                    fill_a
-                    if group_val == "A"
-                    else (fill_b if group_val == "B" else fill_c)
-                )
+                fill = fill_a if group_val == 'A' else (fill_b if group_val == 'B' else fill_c)
                 for col_idx in range(1, len(df_abc.columns) + 1):
                     worksheet.cell(row=row_idx, column=col_idx).fill = fill
 
         output.seek(0)
-        return dash.no_update, dcc.send_bytes(
-            output.getvalue(), "ABC_Analysis_Export.xlsx"
-        )
+        return dash.no_update, dcc.send_bytes(output.getvalue(), "ABC_Analysis_Export.xlsx")
 
     column_defs = []
     for col in df_abc.columns:
         col_def = {"field": col, "sortable": True, "filter": True}
-        if col in ["Сумма", "Кол_во_услуг"]:
-            col_def["filter"] = "agNumberColumnFilter"
-        else:
-            col_def["filter"] = "agSetColumnFilter"
+        if col in ['Сумма', 'Кол_во_услуг']: col_def["filter"] = "agNumberColumnFilter"
+        else: col_def["filter"] = "agSetColumnFilter"
         column_defs.append(col_def)
 
-    row_class_rules = {
-        "abc-a": "data['Группа ABC'] == 'A'",
-        "abc-b": "data['Группа ABC'] == 'B'",
-        "abc-c": "data['Группа ABC'] == 'C'",
-    }
+    row_class_rules = {"abc-a": "data['Группа ABC'] == 'A'", "abc-b": "data['Группа ABC'] == 'B'", "abc-c": "data['Группа ABC'] == 'C'"}
     grid_theme = "ag-theme-alpine" if theme == "light" else "ag-theme-alpine-dark"
 
     ag_grid = dag.AgGrid(
-        rowData=df_abc.to_dict("records"),
-        columnDefs=column_defs,
-        defaultColDef={"flex": 1, "minWidth": 120, "floatingFilter": True},
-        className=grid_theme,
-        rowClassRules=row_class_rules,
-        enableEnterpriseModules=True,
-        dashGridOptions={
-            "localeText": AG_GRID_LOCALE_RU,
-            "pagination": True,
-            "paginationPageSize": 20,
-        },
-        style={
-            "height": "600px",
-            "width": "100%",
-            "borderRadius": "12px",
-            "overflow": "hidden",
-        },
+        rowData=df_abc.to_dict("records"), columnDefs=column_defs, defaultColDef={"flex": 1, "minWidth": 120, "floatingFilter": True},
+        className=grid_theme, rowClassRules=row_class_rules, enableEnterpriseModules=True,
+        dashGridOptions={"localeText": AG_GRID_LOCALE_RU, "pagination": True, "paginationPageSize": 20},
+        style={"height": "600px", "width": "100%", "borderRadius": "12px", "overflow": "hidden"}
     )
     return ag_grid, dash.no_update
 
@@ -2524,7 +2213,6 @@ def drilldown_modal(
         if patient and "Номер ИБ" in df.columns:
             mask &= df["Номер ИБ"].astype(str).str.contains(str(patient), case=False)
 
-        # Жесткая и правильная фильтрация по кликнутой дате и группе
         clicked_date_str = clicked_date.split(" ")[0]
         mask &= df["dt"].dt.strftime("%Y-%m-%d") == clicked_date_str
         mask &= df[group_by_col].astype(str).str.strip() == str(clicked_group).strip()
@@ -3258,6 +2946,20 @@ def load_preset(selected_preset, store_data):
         p.get("profiles"),
         p.get("mes"),
     )
+
+@app.callback(
+    [
+        Output("f-year", "value"), Output("f-quarter", "value"), Output("f-month", "value"),
+        Output("f-dept", "value"), Output("f-profile", "value"), Output("f-mes", "value"),
+        Output("f-patient", "value"), Output("f-yoy", "value")
+    ],
+    [Input("btn-reset-all-filters", "n_clicks")],
+    prevent_initial_call=True
+)
+def clear_all_filter_inputs(n_clicks):
+    if n_clicks:
+        return None, None, None, None, None, None, "", []
+    return dash.no_update
 
 
 def open_browser():
