@@ -225,7 +225,6 @@ def get_optimized_data() -> pd.DataFrame:
         df["Month_Name"] = df["Month_Num"].map(MONTHS_RU)
         df["Quarter_Num"] = df["dt"].dt.quarter.astype(int)
         df["Quarter_Name"] = df["Quarter_Num"].map(QUARTERS_RU)
-        df["YearMonth"] = df["dt"].dt.to_period("M")
         df["Month_Str"] = df["dt"].dt.strftime("%Y-%m")
 
     if "Сумма" in df.columns and df["Сумма"].dtype == object:
