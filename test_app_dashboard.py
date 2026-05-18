@@ -1045,82 +1045,23 @@ app.layout = html.Div(
                             ],
                         ),
                         dbc.Tab(
-                            label="💼 Бизнес-аналитика",
-                            tab_id="tab-abc",
+                            label="💼 Бизнес-аналитика", tab_id="tab-abc",
                             children=[
-                                html.Div(
-                                    style={"marginTop": "25px"},
-                                    children=[
-                                        dbc.Row(
-                                            [
-                                                dbc.Col(
-                                                    html.Div(
-                                                        [
-                                                            html.H4(
-                                                                [
-                                                                    html.I(
-                                                                        className="fas fa-chart-pie",
-                                                                        style={
-                                                                            "color": "#4318FF",
-                                                                            "marginRight": "12px",
-                                                                        },
-                                                                    ),
-                                                                    "ABC-Анализ выручки",
-                                                                ],
-                                                                style={
-                                                                    "fontWeight": "800",
-                                                                    "marginBottom": "15px",
-                                                                },
-                                                            ),
-                                                            dcc.Dropdown(
-                                                                id="abc-group-by",
-                                                                options=[
-                                                                    {
-                                                                        "label": "📋 По кодам МЭС",
-                                                                        "value": "Код Услуги",
-                                                                    },
-                                                                    {
-                                                                        "label": "🏥 По отделениям",
-                                                                        "value": "Наименование отделения",
-                                                                    },
-                                                                    {
-                                                                        "label": "🩺 По профилям",
-                                                                        "value": "Наименование профиля",
-                                                                    },
-                                                                ],
-                                                                value="Код Услуги",
-                                                                clearable=False,
-                                                                style={
-                                                                    "marginBottom": "25px",
-                                                                    "width": "50%",
-                                                                },
-                                                            ),
-                                                            dcc.Loading(
-                                                                type="dot",
-                                                                color="#4318FF",
-                                                                children=html.Div(
-                                                                    id="abc-grid-container",
-                                                                    style={
-                                                                        "width": "100%"
-                                                                    },
-                                                                ),
-                                                            ),
-                                                        ],
-                                                        style={
-                                                            "backgroundColor": "var(--card-bg)",
-                                                            "borderRadius": "24px",
-                                                            "padding": "35px",
-                                                            "boxShadow": "var(--shadow)",
-                                                        },
-                                                    ),
-                                                    width=12,
-                                                )
-                                            ]
-                                        )
-                                    ],
-                                )
-                            ],
-                        ),
+                                html.Div(style={"marginTop": "25px"}, children=[
+                                    dbc.Row([dbc.Col(html.Div([
+                                        html.Div([
+                                            html.H4([html.I(className="fas fa-chart-pie", style={"color": "#4318FF", "marginRight": "12px"}), "ABC-Анализ выручки"], style={"fontWeight": "800", "margin": "0"}),
+                                            html.Button(html.I(className="fas fa-file-excel"), id="btn-export-abc", title="Скачать цветной Excel", className="no-print", style={"background": "transparent", "border": "none", "fontSize": "22px", "color": "#01B574", "cursor": "pointer"})
+                                        ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "15px"}),
+                                        html.P("Классификация по правилу Парето (Группа А: приносит 80% выручки, Группа В: 15%, Группа С: 5%).", style={"color": "var(--text-muted)", "marginBottom": "20px"}),
+                                        html.Label("Сгруппировать по:", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "13px"}),
+                                        dcc.Dropdown(id="abc-group-by", options=[{"label": "📋 По кодам МЭС", "value": "Код Услуги"}, {"label": "🏥 По отделениям", "value": "Наименование отделения"}, {"label": "🩺 По профилям", "value": "Наименование профиля"}], value="Код Услуги", clearable=False, style={"marginBottom": "25px", "width": "50%"}),
+                                        dcc.Loading(type="dot", color="#4318FF", children=html.Div(id="abc-grid-container", style={"width": "100%"})),
+                                        dcc.Download(id="download-abc-xlsx")
+                                    ], style={"backgroundColor": "var(--card-bg)", "borderRadius": "24px", "padding": "35px", "boxShadow": "var(--shadow)"}), width=12)])
+                                ])
+                            ]
+                        )
                     ],
                 ),
             ],
