@@ -1709,77 +1709,78 @@ def build_tab_1_data(years, quarters, months, depts, profiles, mes_list, patient
 
     where_clause = build_where_clause(years, quarters, months, depts, profiles, mes_list, patient)
     
-    total_sum = duckdb.query(f"SELECT SUM(Сумма) FROM df WHERE {where_clause}").fetchone()[0] or 0
-    total_patients = duckdb.query(f'SELECT COUNT(DISTINCT "ИД пациента в версии счета") FROM df WHERE {where_clause}').fetchone()[0] or 0
-    total_mes = duckdb.query(f"SELECT COUNT(*) FROM df WHERE {where_clause}").fetchone()[0] or 0
-    active_depts = duckdb.query(f'SELECT COUNT(DISTINCT "Наименование отделения") FROM df WHERE {where_clause}').fetchone()[0] or 0
-
     fig = go.Figure()
     x_range, tickvals, ticktext = None, [], []
     insight_html = html.Div()
 
-    dates_info = duckdb.query(f"SELECT MIN(dt), MAX(dt) FROM df WHERE {where_clause}").fetchone()
-    
-    if dates_info[0] is not None:
-        min_dt, max_dt = pd.Timestamp(dates_info[0]), pd.Timestamp(dates_info[1])
-        x_range = [min_dt - pd.Timedelta(days=3), max_dt + pd.Timedelta(days=3)]
+    with duckdb.connect() as conn:
+        conn.register('df', df)
         
-        unique_dates_df = duckdb.query(f"SELECT DISTINCT dt FROM df WHERE {where_clause} AND dt IS NOT NULL ORDER BY dt").df()
-        unique_dates = unique_dates_df['dt'].tolist()
-        tickvals = unique_dates
-        ticktext = [f"{MONTHS_RU[pd.Timestamp(d).month]} {pd.Timestamp(d).year}" for d in unique_dates]
+        total_sum = conn.execute(f"SELECT SUM(Сумма) FROM df WHERE {where_clause}").fetchone()[0] or 0
+        total_patients = conn.execute(f'SELECT COUNT(DISTINCT "ИД пациента в версии счета") FROM df WHERE {where_clause}').fetchone()[0] or 0
+        total_mes = conn.execute(f"SELECT COUNT(*) FROM df WHERE {where_clause}").fetchone()[0] or 0
+        active_depts = conn.execute(f'SELECT COUNT(DISTINCT "Наименование отделения") FROM df WHERE {where_clause}').fetchone()[0] or 0
 
-        if group_by_col in df.columns:
-            if metric == "sum": query = f'SELECT dt, "{group_by_col}", SUM(Сумма) as val FROM df WHERE {where_clause} GROUP BY dt, "{group_by_col}"'
-            elif metric == "count_patients": query = f'SELECT dt, "{group_by_col}", COUNT(DISTINCT "ИД пациента в версии счета") as val FROM df WHERE {where_clause} GROUP BY dt, "{group_by_col}"'
-            else: query = f'SELECT dt, "{group_by_col}", COUNT(*) as val FROM df WHERE {where_clause} GROUP BY dt, "{group_by_col}"'
+        dates_info = conn.execute(f"SELECT MIN(dt), MAX(dt) FROM df WHERE {where_clause}").fetchone()
+        
+        if dates_info[0] is not None:
+            min_dt, max_dt = pd.Timestamp(dates_info[0]), pd.Timestamp(dates_info[1])
+            x_range = [min_dt - pd.Timedelta(days=3), max_dt + pd.Timedelta(days=3)]
             
-            trend = duckdb.query(query).df().sort_values('dt')
-            top_query = f'SELECT "{group_by_col}" FROM trend GROUP BY "{group_by_col}" ORDER BY SUM(val) DESC LIMIT 5'
-            top_groups = [row[0] for row in duckdb.query(top_query).fetchall()]
+            unique_dates_df = conn.execute(f"SELECT DISTINCT dt FROM df WHERE {where_clause} AND dt IS NOT NULL ORDER BY dt").df()
+            unique_dates = unique_dates_df['dt'].tolist()
+            tickvals = unique_dates
+            ticktext = [f"{MONTHS_RU[pd.Timestamp(d).month]} {pd.Timestamp(d).year}" for d in unique_dates]
 
-            colors = [{"hex": "#4318FF", "rgba": "rgba(67, 24, 255, 0.15)"}, {"hex": "#FF7D00", "rgba": "rgba(255, 125, 0, 0.15)"}, {"hex": "#01B574", "rgba": "rgba(1, 181, 116, 0.15)"}, {"hex": "#39B8FF", "rgba": "rgba(57, 184, 255, 0.15)"}, {"hex": "#E11D48", "rgba": "rgba(225, 29, 72, 0.15)"}]
-
-            for i, group_val in enumerate(top_groups):
-                g_data = trend[trend[group_by_col] == group_val]
-                c = colors[i % len(colors)]
-                custom_data_formatted = [f"STD|{group_val}"] * len(g_data)
+            if group_by_col in df.columns:
+                if metric == "sum": query = f'SELECT dt, "{group_by_col}", SUM(Сумма) as val FROM df WHERE {where_clause} GROUP BY dt, "{group_by_col}"'
+                elif metric == "count_patients": query = f'SELECT dt, "{group_by_col}", COUNT(DISTINCT "ИД пациента в версии счета") as val FROM df WHERE {where_clause} GROUP BY dt, "{group_by_col}"'
+                else: query = f'SELECT dt, "{group_by_col}", COUNT(*) as val FROM df WHERE {where_clause} GROUP BY dt, "{group_by_col}"'
                 
-                fig.add_trace(go.Scatter(
-                    x=g_data['dt'], y=g_data['val'], name=str(group_val)[:32] + "...", mode='lines+markers',
-                    line=dict(width=4, shape='spline', smoothing=1.3, color=c["hex"]), marker=dict(size=12, color=c["hex"]),
-                    fill='tozeroy', fillcolor=c["rgba"], customdata=custom_data_formatted
-                ))
-                
-        # Сводка (Проценты)
-        if not trend.empty:
-            if metric == "sum":
-                monthly = duckdb.query(f'SELECT Month_Str, SUM(Сумма) as val FROM df WHERE {where_clause} GROUP BY Month_Str ORDER BY Month_Str').df()
-                lbl, fmt = "Общая сумма", lambda x: f"{x:,.2f} ₽".replace(',',' ')
-            elif metric == "count_patients":
-                monthly = duckdb.query(f'SELECT Month_Str, COUNT(DISTINCT "ИД пациента в версии счета") as val FROM df WHERE {where_clause} GROUP BY Month_Str ORDER BY Month_Str').df()
-                lbl, fmt = "Уникальные пациенты", lambda x: f"{x:,.0f} чел.".replace(',',' ')
-            else:
-                monthly = duckdb.query(f'SELECT Month_Str, COUNT(*) as val FROM df WHERE {where_clause} GROUP BY Month_Str ORDER BY Month_Str').df()
-                lbl, fmt = "Оказано услуг", lambda x: f"{x:,.0f} ед.".replace(',',' ')
+                trend = conn.execute(query).df().sort_values('dt')
+                top_query = f'SELECT "{group_by_col}" FROM trend GROUP BY "{group_by_col}" ORDER BY SUM(val) DESC LIMIT 5'
+                top_groups = [row[0] for row in conn.execute(top_query).fetchall()]
 
-            if len(monthly) >= 2:
-                val_first, val_last = monthly.iloc[0]['val'], monthly.iloc[-1]['val']
-                diff = val_last - val_first
-                pct = (diff / val_first * 100) if val_first > 0 else 0
-                color, icon, sign = ("#01B574", "fa-arrow-up", "+") if diff >= 0 else ("#E11D48", "fa-arrow-down", "")
-                insight_html = html.Div([
-                    html.Div([html.I(className="fas fa-robot", style={"marginRight": "8px", "color": "var(--primary)"}), html.B("Сводка:")], style={"marginBottom": "10px", "fontSize": "16px"}),
-                    html.Span(f"Показатель «{lbl}» изменился с {fmt(val_first)} до {fmt(val_last)}. Разница: "),
-                    html.Span([html.I(className=f"fas {icon}", style={"marginRight": "5px"}), f"{sign}{fmt(diff)} ({sign}{pct:.1f}%)"], style={"color": color, "fontWeight": "800", "backgroundColor": f"{color}20", "padding": "4px 8px", "borderRadius": "6px", "marginLeft": "8px"})
-                ])
+                colors = [{"hex": "#4318FF", "rgba": "rgba(67, 24, 255, 0.15)"}, {"hex": "#FF7D00", "rgba": "rgba(255, 125, 0, 0.15)"}, {"hex": "#01B574", "rgba": "rgba(1, 181, 116, 0.15)"}, {"hex": "#39B8FF", "rgba": "rgba(57, 184, 255, 0.15)"}, {"hex": "#E11D48", "rgba": "rgba(225, 29, 72, 0.15)"}]
+
+                for i, group_val in enumerate(top_groups):
+                    g_data = trend[trend[group_by_col] == group_val]
+                    c = colors[i % len(colors)]
+                    custom_data_formatted = [f"STD|{group_val}"] * len(g_data)
+                    
+                    fig.add_trace(go.Scatter(
+                        x=g_data['dt'], y=g_data['val'], name=str(group_val)[:32] + "...", mode='lines+markers',
+                        line=dict(width=4, shape='spline', smoothing=1.3, color=c["hex"]), marker=dict(size=12, color=c["hex"]),
+                        fill='tozeroy', fillcolor=c["rgba"], customdata=custom_data_formatted
+                    ))
+                    
+            if 'trend' in locals() and not trend.empty:
+                if metric == "sum":
+                    monthly = conn.execute(f'SELECT Month_Str, SUM(Сумма) as val FROM df WHERE {where_clause} GROUP BY Month_Str ORDER BY Month_Str').df()
+                    lbl, fmt = "Общая сумма", lambda x: f"{x:,.2f} ₽".replace(',',' ')
+                elif metric == "count_patients":
+                    monthly = conn.execute(f'SELECT Month_Str, COUNT(DISTINCT "ИД пациента в версии счета") as val FROM df WHERE {where_clause} GROUP BY Month_Str ORDER BY Month_Str').df()
+                    lbl, fmt = "Уникальные пациенты", lambda x: f"{x:,.0f} чел.".replace(',',' ')
+                else:
+                    monthly = conn.execute(f'SELECT Month_Str, COUNT(*) as val FROM df WHERE {where_clause} GROUP BY Month_Str ORDER BY Month_Str').df()
+                    lbl, fmt = "Оказано услуг", lambda x: f"{x:,.0f} ед.".replace(',',' ')
+
+                if len(monthly) >= 2:
+                    val_first, val_last = monthly.iloc[0]['val'], monthly.iloc[-1]['val']
+                    diff = val_last - val_first
+                    pct = (diff / val_first * 100) if val_first > 0 else 0
+                    color, icon, sign = ("#01B574", "fa-arrow-up", "+") if diff >= 0 else ("#E11D48", "fa-arrow-down", "")
+                    insight_html = html.Div([
+                        html.Div([html.I(className="fas fa-robot", style={"marginRight": "8px", "color": "var(--primary)"}), html.B("Сводка:")], style={"marginBottom": "10px", "fontSize": "16px"}),
+                        html.Span(f"Показатель «{lbl}» изменился с {fmt(val_first)} до {fmt(val_last)}. Разница: "),
+                        html.Span([html.I(className=f"fas {icon}", style={"marginRight": "5px"}), f"{sign}{fmt(diff)} ({sign}{pct:.1f}%)"], style={"color": color, "fontWeight": "800", "backgroundColor": f"{color}20", "padding": "4px 8px", "borderRadius": "6px", "marginLeft": "8px"})
+                    ])
 
     fig = apply_beautiful_layout(fig, theme, x_range, tickvals, ticktext)
     fig.update_xaxes(rangeslider_visible=False)
     str_total_sum = f"{total_sum:,.2f} ₽".replace(",", " ").replace(".", ",")
     
     return fig, "Аналитика по времени", str_total_sum, str(total_patients), str(total_mes), str(active_depts), insight_html
-
 
 @cache.memoize(timeout=600)
 def build_tab_2_data(years, quarters, months, depts, profiles, mes_list, patient, metric, theme):
@@ -1789,29 +1790,32 @@ def build_tab_2_data(years, quarters, months, depts, profiles, mes_list, patient
     where_clause = build_where_clause(years, quarters, months, depts, profiles, mes_list, patient)
     sunburst_fig, heatmap_fig = go.Figure(), go.Figure()
 
-    has_data = duckdb.query(f"SELECT COUNT(*) FROM df WHERE {where_clause}").fetchone()[0] > 0
-    if has_data:
-        if 'Month_Str' in df.columns and 'Наименование отделения' in df.columns:
-            if metric == "sum": query_hm = f'SELECT "Наименование отделения", "Month_Str", SUM(Сумма) as val FROM df WHERE {where_clause} GROUP BY "Наименование отделения", "Month_Str"'
-            elif metric == "count_patients": query_hm = f'SELECT "Наименование отделения", "Month_Str", COUNT(DISTINCT "ИД пациента в версии счета") as val FROM df WHERE {where_clause} GROUP BY "Наименование отделения", "Month_Str"'
-            else: query_hm = f'SELECT "Наименование отделения", "Month_Str", COUNT(*) as val FROM df WHERE {where_clause} GROUP BY "Наименование отделения", "Month_Str"'
-                
-            hm_data = duckdb.query(query_hm).df()
-            pivot = hm_data.pivot(index='Наименование отделения', columns='Month_Str', values='val').fillna(0)
-            heatmap_fig.add_trace(go.Heatmap(z=pivot.values, x=pivot.columns, y=pivot.index, colorscale="Blues" if theme == "light" else "Viridis"))
-            heatmap_fig = apply_beautiful_layout(heatmap_fig, theme)
-            heatmap_fig.update_layout(height=max(400, (len(pivot.index) * 35) + 150), xaxis=dict(showgrid=False, type='category'), yaxis=dict(showgrid=False, automargin=True, tickfont=dict(size=11)))
+    with duckdb.connect() as conn:
+        conn.register('df', df)
+        
+        has_data = conn.execute(f"SELECT COUNT(*) FROM df WHERE {where_clause}").fetchone()[0] > 0
+        if has_data:
+            if 'Month_Str' in df.columns and 'Наименование отделения' in df.columns:
+                if metric == "sum": query_hm = f'SELECT "Наименование отделения", "Month_Str", SUM(Сумма) as val FROM df WHERE {where_clause} GROUP BY "Наименование отделения", "Month_Str"'
+                elif metric == "count_patients": query_hm = f'SELECT "Наименование отделения", "Month_Str", COUNT(DISTINCT "ИД пациента в версии счета") as val FROM df WHERE {where_clause} GROUP BY "Наименование отделения", "Month_Str"'
+                else: query_hm = f'SELECT "Наименование отделения", "Month_Str", COUNT(*) as val FROM df WHERE {where_clause} GROUP BY "Наименование отделения", "Month_Str"'
+                    
+                hm_data = conn.execute(query_hm).df()
+                pivot = hm_data.pivot(index='Наименование отделения', columns='Month_Str', values='val').fillna(0)
+                heatmap_fig.add_trace(go.Heatmap(z=pivot.values, x=pivot.columns, y=pivot.index, colorscale="Blues" if theme == "light" else "Viridis"))
+                heatmap_fig = apply_beautiful_layout(heatmap_fig, theme)
+                heatmap_fig.update_layout(height=max(400, (len(pivot.index) * 35) + 150), xaxis=dict(showgrid=False, type='category'), yaxis=dict(showgrid=False, automargin=True, tickfont=dict(size=11)))
 
-        if set(['Наименование отделения', 'Наименование профиля', 'Код Услуги']).issubset(df.columns):
-            query_tree = f"""SELECT "Наименование отделения", "Наименование профиля", "Код Услуги", SUM(Сумма) as Сумма, COUNT(*) as count_val FROM df WHERE {where_clause} GROUP BY "Наименование отделения", "Наименование профиля", "Код Услуги" """
-            df_sun = duckdb.query(query_tree).df().fillna("Неизвестно")
-            
-            sort_col = 'Сумма' if metric == "sum" else 'count_val'
-            df_sun = df_sun.nlargest(150, sort_col)
-            val_col = 'Сумма' if metric == "sum" else 'count_val'
-            sunburst_fig = px.treemap(df_sun, path=['Наименование отделения', 'Наименование профиля', 'Код Услуги'], values=val_col, color='Сумма' if metric == 'sum' else None, color_continuous_scale='Blues')
-            sunburst_fig.update_traces(maxdepth=2, pathbar=dict(visible=True, textfont=dict(size=15, family="Inter")), root_color="#e9edf7", marker=dict(line=dict(width=1.5, color="#ffffff")))
-            sunburst_fig.update_layout(margin=dict(t=45, l=10, r=10, b=10), paper_bgcolor="rgba(0,0,0,0)")
+            if set(['Наименование отделения', 'Наименование профиля', 'Код Услуги']).issubset(df.columns):
+                query_tree = f"""SELECT "Наименование отделения", "Наименование профиля", "Код Услуги", SUM(Сумма) as Сумма, COUNT(*) as count_val FROM df WHERE {where_clause} GROUP BY "Наименование отделения", "Наименование профиля", "Код Услуги" """
+                df_sun = conn.execute(query_tree).df().fillna("Неизвестно")
+                
+                sort_col = 'Сумма' if metric == "sum" else 'count_val'
+                df_sun = df_sun.nlargest(150, sort_col)
+                val_col = 'Сумма' if metric == "sum" else 'count_val'
+                sunburst_fig = px.treemap(df_sun, path=['Наименование отделения', 'Наименование профиля', 'Код Услуги'], values=val_col, color='Сумма' if metric == 'sum' else None, color_continuous_scale='Blues')
+                sunburst_fig.update_traces(maxdepth=2, pathbar=dict(visible=True, textfont=dict(size=15, family="Inter")), root_color="#e9edf7", marker=dict(line=dict(width=1.5, color="#ffffff")))
+                sunburst_fig.update_layout(margin=dict(t=45, l=10, r=10, b=10), paper_bgcolor="rgba(0,0,0,0)")
 
     return sunburst_fig, heatmap_fig
 
@@ -1982,7 +1986,12 @@ def update_tab_2_router(n_clicks_apply, n_clicks_reset, active_tab, theme, years
 )
 
 def update_table_only(n_clicks_apply, n_clicks_reset, heatmap_click, active_tab, theme, years, quarters, months, depts, profiles, mes_list, patient):
+    import time
+    print(f"\n[ТАБЛИЦА] СТАРТ: active_tab={active_tab}")
+    t_start = time.time()
+
     if active_tab != "tab-beta":
+        print("[ТАБЛИЦА] Пропуск (не та вкладка)")
         return dash.no_update, dash.no_update
         
     ctx = dash.callback_context
@@ -2002,19 +2011,27 @@ def update_table_only(n_clicks_apply, n_clicks_reset, heatmap_click, active_tab,
         where_clause += f" AND Month_Str = '{clicked_month}' AND \"Наименование отделения\" = '{safe_dept}'"
         cf_msg = f"🔍 Отфильтровано по: {clicked_dept} ({clicked_month})"
 
-    has_data = duckdb.query(f"SELECT COUNT(*) FROM df WHERE {where_clause}").fetchone()[0] > 0
-    if not has_data: return html.Div("Нет данных"), cf_msg
-
-    agg_cols = ['Наименование отделения', 'Наименование профиля', 'Код Услуги', 'Номер ИБ']
-    agg_cols = [c for c in agg_cols if c in df.columns]
-    
-    cols_str = ', '.join([f'"{c}"' for c in agg_cols])
-    if 'Сумма' in df.columns:
-        query = f'SELECT {cols_str}, COUNT(*) as Кол_во_услуг, ROUND(SUM(Сумма), 2) as Сумма FROM df WHERE {where_clause} GROUP BY {cols_str}'
-    else:
-        query = f'SELECT {cols_str}, COUNT(*) as Кол_во_услуг FROM df WHERE {where_clause} GROUP BY {cols_str}'
+    with duckdb.connect() as conn:
+        conn.register('df', df)
         
-    grid_df = duckdb.query(query).df()
+        has_data = conn.execute(f"SELECT COUNT(*) FROM df WHERE {where_clause}").fetchone()[0] > 0
+        if not has_data: 
+            return html.Div("Нет данных для отображения", style={"padding": "20px", "fontWeight": "bold"}), cf_msg
+
+        agg_cols = ['Наименование отделения', 'Наименование профиля', 'Код Услуги', 'Номер ИБ']
+        agg_cols = [c for c in agg_cols if c in df.columns]
+        
+        cols_str = ', '.join([f'"{c}"' for c in agg_cols])
+        
+        if 'Сумма' in df.columns:
+            query = f'SELECT {cols_str}, COUNT(*) as Кол_во_услуг, ROUND(SUM(Сумма), 2) as Сумма FROM df WHERE {where_clause} GROUP BY {cols_str} ORDER BY Сумма DESC LIMIT 1000'
+        else:
+            query = f'SELECT {cols_str}, COUNT(*) as Кол_во_услуг FROM df WHERE {where_clause} GROUP BY {cols_str} ORDER BY Кол_во_услуг DESC LIMIT 1000'
+            
+        grid_df = conn.execute(query).df()
+
+    if grid_df.empty:
+        return html.Div("Нет данных для отображения", style={"padding": "20px", "fontWeight": "bold"}), cf_msg
 
     column_defs = []
     for col in grid_df.columns:
@@ -2036,6 +2053,7 @@ def update_table_only(n_clicks_apply, n_clicks_reset, heatmap_click, active_tab,
         style={"height": "650px", "width": "100%", "borderRadius": "12px"}
     )
     
+    print(f"[ТАБЛИЦА] Успешно завершена. Отправка...")
     return ag_grid, cf_msg
 
 
@@ -2069,23 +2087,23 @@ def update_abc_analysis(n_clicks_apply, n_clicks_reset, group_by, export_clicks,
     if df.empty or 'Сумма' not in df.columns or group_by not in df.columns:
         return html.Div("Нет данных для ABC анализа"), dash.no_update
 
-    mask = pd.Series(True, index=df.index)
-    if years: mask &= df['Year'].isin(years)
-    if quarters: mask &= df['Quarter_Name'].isin(quarters)
-    if months: mask &= df['Month_Name'].isin(months)
-    if depts: mask &= df['Наименование отделения'].isin(depts)
-    if profiles: mask &= df['Наименование профиля'].isin(profiles)
-    if mes_list: mask &= df['Код Услуги'].isin(mes_list)
-
-    filtered_df = df[mask]
+    where_clause = build_where_clause(years, quarters, months, depts, profiles, mes_list)
     
-    query_abc = f"""
-        SELECT "{group_by}", SUM(Сумма) as Сумма, COUNT(*) as Кол_во_услуг
-        FROM filtered_df
-        GROUP BY "{group_by}"
-        ORDER BY Сумма DESC
-    """
-    df_abc = duckdb.query(query_abc).df()
+    with duckdb.connect() as conn:
+        conn.register('df', df)
+        
+        has_data = conn.execute(f"SELECT COUNT(*) FROM df WHERE {where_clause}").fetchone()[0] > 0
+        if not has_data:
+            return html.Div("Нет данных для отображения", style={"padding": "20px", "fontWeight": "bold"}), dash.no_update
+
+        query_abc = f"""
+            SELECT "{group_by}", SUM(Сумма) as Сумма, COUNT(*) as Кол_во_услуг
+            FROM df
+            WHERE {where_clause}
+            GROUP BY "{group_by}"
+            ORDER BY Сумма DESC
+        """
+        df_abc = conn.execute(query_abc).df()
 
     total_sum = df_abc['Сумма'].sum()
     if total_sum > 0:
@@ -2118,6 +2136,9 @@ def update_abc_analysis(n_clicks_apply, n_clicks_reset, group_by, export_clicks,
 
         output.seek(0)
         return dash.no_update, dcc.send_bytes(output.getvalue(), "ABC_Analysis_Export.xlsx")
+
+    if df_abc.empty:
+        return html.Div("Нет данных", style={"padding": "20px", "fontWeight": "bold"}), dash.no_update
 
     column_defs = []
     for col in df_abc.columns:
