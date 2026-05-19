@@ -705,25 +705,6 @@ app.layout = html.Div(
                 ),
                 dbc.Button([html.I(className="fas fa-check", style={"marginRight": "10px"}), "Применить фильтры"], id="btn-apply-filters", style={"width": "100%", "backgroundColor": "#01B574", "border": "none", "borderRadius": "16px", "padding": "14px", "fontWeight": "600", "marginTop": "25px", "boxShadow": "0px 10px 20px rgba(1, 181, 116, 0.2)"}),
                 dbc.Button([html.I(className="fas fa-trash-alt", style={"marginRight": "10px"}), "Сбросить все фильтры"], id="btn-reset-all-filters", style={"width": "100%", "backgroundColor": "transparent", "border": "2px solid #E11D48", "color": "#E11D48", "borderRadius": "16px", "padding": "14px", "fontWeight": "600", "marginTop": "10px"}),
-                dbc.Button(
-                    [
-                        html.I(
-                            className="fas fa-file-excel", style={"marginRight": "10px"}
-                        ),
-                        "Экспорт в Excel",
-                    ],
-                    id="btn-dl",
-                    style={
-                        "width": "100%",
-                        "backgroundColor": "var(--primary)",
-                        "border": "none",
-                        "borderRadius": "16px",
-                        "padding": "14px",
-                        "fontWeight": "600",
-                        "marginTop": "10px",
-                    },
-                ),
-                dcc.Download(id="download-xlsx"),
             ],
         ),
         html.Div(
@@ -2359,20 +2340,7 @@ def update_abc_analysis(n_clicks_apply, n_clicks_reset, group_by, export_clicks,
         State("f-patient", "value"),
     ],
 )
-def drilldown_modal(
-    clickData,
-    close_clicks,
-    is_open,
-    group_by_col,
-    metric,
-    years,
-    quarters,
-    months,
-    depts,
-    profiles,
-    mes_list,
-    patient,
-):
+def drilldown_modal(clickData, close_clicks, is_open, group_by_col, metric, years, quarters, months, depts, profiles, mes_list, patient):
     ctx = dash.callback_context
     if not ctx.triggered:
         return is_open, dash.no_update, dash.no_update
@@ -3030,22 +2998,29 @@ app.clientside_callback(
     prevent_initial_call=True
 )
 
+# 2. Логика сброса выделения
 app.clientside_callback(
     """
     function(clickData, closeSmall, closeLarge) {
         const triggered = dash_clientside.callback_context.triggered.map(t => t.prop_id);
 
-        // 1. При закрытии модальных окон принудительно очищаем выделение через {'points': []}
-        // Это заставит Dash отменить прозрачность остальных точек.
-        if (triggered.includes("btn-close-modal.n_clicks") || 
-            triggered.includes("close-modal.n_clicks")) {
-            return [null, {'points': []}];
+        function clearPlotlySelection() {
+            const graphDiv = document.getElementById('main-line-chart');
+            if (graphDiv && window.Plotly) {
+                window.Plotly.restyle(graphDiv, 'selectedpoints', null);
+            }
         }
 
-        // 2. Если это одиночный клик без Shift - сбрасываем выделение, чтобы все точки оставались яркими
+        if (triggered.includes("btn-close-modal.n_clicks") || 
+            triggered.includes("close-modal.n_clicks")) {
+            clearPlotlySelection();
+            return [null, null];
+        }
+
         if (triggered.includes("main-line-chart.clickData")) {
             if (!window.isShiftPressed) {
-                return [window.dash_clientside.no_update, {'points': []}];
+                clearPlotlySelection();
+                return [window.dash_clientside.no_update, null];
             }
         }
         
@@ -3070,8 +3045,7 @@ app.clientside_callback(
         if (!n_clicks) return window.dash_clientside.no_update;
         
         let new_style = {...current_style};
-        
-        // Меняем высоту с 500 пикселей на 1300 пикселей (график станет огромным)
+
         if (new_style.height === '500px') {
             new_style.height = '1300px'; 
         } else {
@@ -3090,12 +3064,11 @@ app.clientside_callback(
 app.clientside_callback(
     """
     function(selectedData) {
-        // Защита от пустых данных, включая {'points': []}, которые мы отправляем выше
+        console.log("[JS-3] Входящий selectedData:", selectedData, "| Shift:", window.isShiftPressed);
         if (!selectedData || !selectedData.points || selectedData.points.length === 0) {
             return null; 
         }
         
-        // Открываем маленькое модальное окно только если зажат Shift ИЛИ выделено больше 1 точки
         if (window.isShiftPressed || selectedData.points.length > 1) {
             return selectedData;
         }
@@ -3264,7 +3237,6 @@ def clear_all_filter_inputs(n_clicks):
 @app.callback(
     Output("selection-modal", "style"),
     Output("selection-modal-content", "children"),
-    # ВНИМАНИЕ: Мы убрали отсюда Output("main-line-chart", "selectedData")
     [
         Input("filtered-selected-data", "data"), 
         Input("btn-close-modal", "n_clicks")
@@ -3276,7 +3248,6 @@ def show_selected_points_data(selected_data, close_clicks, group_by_col):
     ctx = dash.callback_context
     trigger = ctx.triggered[0]['prop_id'] if ctx.triggered else ""
 
-    # При закрытии модального окна скрываем его
     if "btn-close-modal" in trigger:
         return {"display": "none"}, ""
 
