@@ -218,6 +218,11 @@ app.index_string = '''
         <footer>
             {%config%} {%scripts%} {%renderer%}
             <script>
+                window.isShiftPressed = false;
+                document.addEventListener('keydown', function(e) { if(e.key === 'Shift') window.isShiftPressed = true; });
+                document.addEventListener('keyup', function(e) { if(e.key === 'Shift') window.isShiftPressed = false; });
+                window.addEventListener('blur', function() { window.isShiftPressed = false; });
+
                 document.addEventListener('keydown', function(e) {
                     if (e.target && e.target.classList.contains('sql-editor')) {
                         const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
@@ -456,6 +461,8 @@ app.layout = html.Div(
     [
         dcc.Store(id="theme-store", data="light"),
         dcc.Store(id="presets-store", storage_type="local", data={}),
+        dcc.Store(id="filtered-click-data"),
+        dcc.Store(id="filtered-selected-data"),
         html.Div(
             className="no-print",
             style={
@@ -1454,6 +1461,36 @@ app.layout = html.Div(
                 ),
             ],
         ),
+        html.Div(
+            id="selection-modal",
+            style={"display": "none"},
+            children=[
+                html.Div(
+                    style={
+                        "position": "fixed", "bottom": "30px", "right": "30px", 
+                        "backgroundColor": "var(--card-bg)", "padding": "25px", "borderRadius": "16px",
+                        "boxShadow": "0px 20px 50px rgba(0,0,0,0.3)", "zIndex": "9999", "width": "350px",
+                        "border": "2px solid var(--primary)", "color": "var(--text-main)"
+                    },
+                    children=[
+                        html.Div([
+                            html.I(className="fas fa-chart-pie", style={"color": "var(--primary)", "marginRight": "10px", "fontSize": "20px"}),
+                            html.B("Аналитика по выбору", style={"fontSize": "18px"})
+                        ], style={"marginBottom": "15px", "borderBottom": "1px solid var(--grid-color)", "paddingBottom": "10px"}),
+                        
+                        html.Div(id="selection-modal-content", style={"fontSize": "15px", "lineHeight": "1.8"}),
+                        
+                        html.Button(
+                            "Закрыть", id="btn-close-modal", n_clicks=0,
+                            style={
+                                "marginTop": "20px", "width": "100%", "padding": "10px", "backgroundColor": "var(--primary)",
+                                "color": "white", "border": "none", "borderRadius": "10px", "cursor": "pointer", "fontWeight": "bold"
+                            }
+                        )
+                    ]
+                )
+            ]
+        ),
         # --- МОДАЛЬНОЕ ОКНО: ДЕТАЛИЗАЦИЯ ---
         dbc.Modal(
             [
@@ -2217,7 +2254,7 @@ def update_abc_analysis(n_clicks_apply, n_clicks_reset, group_by, export_clicks,
         Output("modal-title", "children"),
         Output("modal-body", "children"),
     ],
-    [Input("main-line-chart", "clickData"), Input("close-modal", "n_clicks")],
+    [Input("filtered-click-data", "data"), Input("close-modal", "n_clicks")],
     [
         State("drilldown-modal", "is_open"),
         State("f-group-by", "value"),
@@ -2253,7 +2290,7 @@ def drilldown_modal(
     if trigger_id == "close-modal":
         return False, "", ""
 
-    if clickData and trigger_id == "main-line-chart":
+    if clickData and trigger_id == "filtered-click-data":
         point = clickData["points"][0]
         custom_info = str(point.get("customdata", ""))
 
@@ -2880,6 +2917,75 @@ app.clientside_callback(
     prevent_initial_call=True,
 )
 
+app.clientside_callback(
+    """
+    function(clickData) {
+        if (!clickData) return window.dash_clientside.no_update;
+        if (window.isShiftPressed) {
+            return window.dash_clientside.no_update;
+        }
+        return clickData;
+    }
+    """,
+    Output("filtered-click-data", "data"),
+    Input("main-line-chart", "clickData"),
+    prevent_initial_call=True
+)
+
+app.clientside_callback(
+    """
+    function(clickData, closeSmall, closeLarge) {
+        const triggered = dash_clientside.callback_context.triggered.map(t => t.prop_id);
+
+        // 1. При закрытии модальных окон принудительно очищаем выделение через {'points': []}
+        // Это заставит Dash отменить прозрачность остальных точек.
+        if (triggered.includes("btn-close-modal.n_clicks") || 
+            triggered.includes("close-modal.n_clicks")) {
+            return [null, {'points': []}];
+        }
+
+        // 2. Если это одиночный клик без Shift - сбрасываем выделение, чтобы все точки оставались яркими
+        if (triggered.includes("main-line-chart.clickData")) {
+            if (!window.isShiftPressed) {
+                return [window.dash_clientside.no_update, {'points': []}];
+            }
+        }
+        
+        return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+    }
+    """,
+    [
+        Output("main-line-chart", "clickData"),
+        Output("main-line-chart", "selectedData")
+    ],
+    [
+        Input("main-line-chart", "clickData"),
+        Input("btn-close-modal", "n_clicks"),
+        Input("close-modal", "n_clicks")
+    ],
+    prevent_initial_call=True
+)
+
+app.clientside_callback(
+    """
+    function(selectedData) {
+        // Защита от пустых данных, включая {'points': []}, которые мы отправляем выше
+        if (!selectedData || !selectedData.points || selectedData.points.length === 0) {
+            return null; 
+        }
+        
+        // Открываем маленькое модальное окно только если зажат Shift ИЛИ выделено больше 1 точки
+        if (window.isShiftPressed || selectedData.points.length > 1) {
+            return selectedData;
+        }
+        
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("filtered-selected-data", "data"),
+    Input("main-line-chart", "selectedData"),
+    prevent_initial_call=True
+)
 
 @app.callback(
     Output("heatmap-chart", "clickData"),
@@ -3033,6 +3139,63 @@ def clear_all_filter_inputs(n_clicks):
         return None, None, None, None, None, None, "", []
     return dash.no_update
 
+
+@app.callback(
+    Output("selection-modal", "style"),
+    Output("selection-modal-content", "children"),
+    # ВНИМАНИЕ: Мы убрали отсюда Output("main-line-chart", "selectedData")
+    [
+        Input("filtered-selected-data", "data"), 
+        Input("btn-close-modal", "n_clicks")
+    ],
+    [State("f-group-by", "value")],
+    prevent_initial_call=True
+)
+def show_selected_points_data(selected_data, close_clicks, group_by_col):
+    ctx = dash.callback_context
+    trigger = ctx.triggered[0]['prop_id'] if ctx.triggered else ""
+
+    # При закрытии модального окна скрываем его
+    if "btn-close-modal" in trigger:
+        return {"display": "none"}, ""
+
+    if not selected_data or 'points' not in selected_data or len(selected_data['points']) == 0:
+        return {"display": "none"}, ""
+
+    df = get_optimized_data()
+    if df.empty:
+        return {"display": "none"}, ""
+
+    conditions = []
+    for p in selected_data['points']:
+        dt_val = p.get('x')[:10] 
+        c_data = str(p.get('customdata', '')) 
+        
+        if '|' in c_data:
+            group_val = c_data.split('|')[1]
+            safe_grp = str(group_val).replace("'", "''")
+            conditions.append(f"(CAST(dt AS DATE) = '{dt_val}' AND \"{group_by_col}\" = '{safe_grp}')")
+
+    if not conditions:
+        return {"display": "none"}, ""
+
+    where_points = " OR ".join(conditions)
+
+    with duckdb.connect() as conn:
+        conn.register('df', df)
+        query = f'SELECT ROUND(SUM(Сумма), 2), COUNT(*) FROM df WHERE {where_points}'
+        res = conn.execute(query).fetchone()
+
+    total_sum = res[0] or 0
+    total_count = res[1] or 0
+
+    content = html.Div([
+        html.Div([html.Span("Выделено точек: ", style={"color": "var(--text-muted)"}), html.B(f"{len(selected_data['points'])}")]),
+        html.Div([html.Span("Количество услуг: ", style={"color": "var(--text-muted)"}), html.B(f"{total_count:,} ед.".replace(",", " "))]),
+        html.Div([html.Span("Общая сумма: ", style={"color": "var(--text-muted)"}), html.B(f"{total_sum:,.2f} ₽".replace(",", " ").replace(".", ","), style={"color": "#01B574", "fontSize": "16px"})]),
+    ])
+
+    return {"display": "block"}, content
 
 def open_browser():
     webbrowser.open_new("http://127.0.0.1:8050")
