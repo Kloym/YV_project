@@ -1828,8 +1828,9 @@ def build_tab_1_data(years, quarters, months, depts, profiles, mes_list, patient
 
     fig = apply_beautiful_layout(fig, theme, x_range, tickvals, ticktext)
     fig.update_xaxes(rangeslider_visible=False)
-    str_total_sum = f"{total_sum:,.2f} ₽".replace(",", " ").replace(".", ",")
+    fig.update_layout(clickmode='event+select')
     
+    str_total_sum = f"{total_sum:,.2f} ₽".replace(",", " ").replace(".", ",")
     return fig, "Аналитика по времени", str_total_sum, str(total_patients), str(total_mes), str(active_depts), insight_html
 
 @cache.memoize(timeout=600)
