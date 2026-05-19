@@ -161,7 +161,7 @@ except:
 
 
 # --- CSS СТИЛИ И КЛИЕНТСКИЙ JAVASCRIPT ---
-app.index_string = """
+app.index_string = '''
 <!DOCTYPE html>
 <html>
     <head>
@@ -217,10 +217,60 @@ app.index_string = """
         <div id="app-container">{%app_entry%}</div>
         <footer>
             {%config%} {%scripts%} {%renderer%}
+            <script>
+                document.addEventListener('keydown', function(e) {
+                    if (e.target && e.target.classList.contains('sql-editor')) {
+                        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+                        const val = e.target.value;
+                        const start = e.target.selectionStart;
+                        const end = e.target.selectionEnd;
+                        const pairs = { '(': ')', '[': ']', '{': '}', "'": "'", '"': '"' };
+                        const closeChars = [')', ']', '}', "'", '"'];
+
+                        // 1. Умный пропуск: если набираем закрывающую скобку/кавычку, которая уже стоит впереди
+                        if (closeChars.includes(e.key) && start === end && val[start] === e.key) {
+                            e.preventDefault();
+                            e.target.selectionStart = e.target.selectionEnd = start + 1;
+                            return;
+                        }
+
+                        // 2. Обработка клавиши Tab (вставляем 4 пробела вместо смены фокуса)
+                        if (e.key === 'Tab') {
+                            e.preventDefault();
+                            const spaces = "    ";
+                            nativeSetter.call(e.target, val.substring(0, start) + spaces + val.substring(end));
+                            e.target.selectionStart = e.target.selectionEnd = start + spaces.length;
+                            e.target.dispatchEvent(new Event('input', { bubbles: true }));
+                            return;
+                        }
+
+                        // 3. Автозакрытие скобок и кавычек
+                        if (pairs[e.key]) {
+                            e.preventDefault();
+                            const openChar = e.key;
+                            const closeChar = pairs[openChar];
+                            
+                            if (start !== end) {
+                                // Если текст выделен — оборачиваем его
+                                const selected = val.substring(start, end);
+                                nativeSetter.call(e.target, val.substring(0, start) + openChar + selected + closeChar + val.substring(end));
+                                e.target.selectionStart = start + 1;
+                                e.target.selectionEnd = end + 1;
+                            } else {
+                                // Если ничего не выделено — просто ставим пару
+                                nativeSetter.call(e.target, val.substring(0, start) + openChar + closeChar + val.substring(end));
+                                e.target.selectionStart = e.target.selectionEnd = start + 1;
+                            }
+                            // Сообщаем React/Dash, что значение изменилось
+                            e.target.dispatchEvent(new Event('input', { bubbles: true }));
+                        }
+                    }
+                });
+            </script>
         </footer>
     </body>
 </html>
-"""
+'''
 
 
 # --- ФУНКЦИИ ОБРАБОТКИ ДАННЫХ И ВИЗУАЛА ---
