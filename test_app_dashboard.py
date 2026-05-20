@@ -2147,12 +2147,8 @@ def update_tab_2_router(n_clicks_apply, n_clicks_reset, active_tab, theme, tree_
 )
 
 def update_table_only(n_clicks_apply, n_clicks_reset, heatmap_click, active_tab, theme, years, quarters, months, depts, profiles, mes_list, patient):
-    import time
-    print(f"\n[ТАБЛИЦА] СТАРТ: active_tab={active_tab}")
-    t_start = time.time()
 
     if active_tab != "tab-beta":
-        print("[ТАБЛИЦА] Пропуск (не та вкладка)")
         return dash.no_update, dash.no_update
         
     ctx = dash.callback_context
@@ -2213,8 +2209,7 @@ def update_table_only(n_clicks_apply, n_clicks_reset, heatmap_click, active_tab,
         dashGridOptions={"localeText": AG_GRID_LOCALE_RU, "pagination": True, "paginationPageSize": 15, "rowGroupPanelShow": "always", "sideBar": True}, 
         style={"height": "650px", "width": "100%", "borderRadius": "12px"}
     )
-    
-    print(f"[ТАБЛИЦА] Успешно завершена. Отправка...")
+
     return ag_grid, cf_msg
 
 
