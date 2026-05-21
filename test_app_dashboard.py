@@ -132,7 +132,8 @@ app = dash.Dash(
         "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap",
     ],
     external_scripts=[
-        "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"
+        "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js",
+        "https://cdnjs.cloudflare.com/ajax/libs/vanilla-tilt/1.8.0/vanilla-tilt.min.js"
     ],
 )
 app.title = "Clinical Dashboard"
@@ -162,7 +163,7 @@ except:
 
 
 # --- CSS СТИЛИ И КЛИЕНТСКИЙ JAVASCRIPT ---
-app.index_string = '''
+app.index_string = r'''
 <!DOCTYPE html>
 <html>
     <head>
@@ -212,6 +213,30 @@ app.index_string = '''
             .nav-tabs .nav-link:hover { color: var(--primary); background-color: var(--primary-light); }
             .nav-tabs .nav-link.active { color: var(--primary); background-color: transparent; border-bottom: 3px solid var(--primary); }
             @media print { .no-print { display: none !important; } body { background-color: white !important; } .card { box-shadow: none !important; border: 1px solid #ddd !important; } }
+
+            [data-dash-is-loading="true"] {
+                position: relative;
+                pointer-events: none;
+            }
+
+            [data-dash-is-loading="true"] > * {
+                opacity: 0 !important;
+                transition: opacity 0.1s;
+            }
+            [data-dash-is-loading="true"]::before {
+                content: '';
+                position: absolute;
+                top: 0; left: 0; right: 0; bottom: 0;
+                background: linear-gradient(90deg, var(--card-bg) 25%, var(--grid-color) 50%, var(--card-bg) 75%);
+                background-size: 200% 100%;
+                animation: skeleton-loading 1.5s infinite linear;
+                z-index: 100;
+                border-radius: inherit;
+            }
+            @keyframes skeleton-loading {
+                0% { background-position: 200% 0; }
+                100% { background-position: -200% 0; }
+            }
         </style>
     </head>
     <body>
@@ -219,11 +244,13 @@ app.index_string = '''
         <footer>
             {%config%} {%scripts%} {%renderer%}
             <script>
+                // --- ШПИОН ЗА SHIFT ---
                 window.isShiftPressed = false;
                 document.addEventListener('keydown', function(e) { if(e.key === 'Shift') window.isShiftPressed = true; });
                 document.addEventListener('keyup', function(e) { if(e.key === 'Shift') window.isShiftPressed = false; });
                 window.addEventListener('blur', function() { window.isShiftPressed = false; });
 
+                // --- АВТОСКОБКИ ДЛЯ SQL ---
                 document.addEventListener('keydown', function(e) {
                     if (e.target && e.target.classList.contains('sql-editor')) {
                         const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
@@ -233,14 +260,12 @@ app.index_string = '''
                         const pairs = { '(': ')', '[': ']', '{': '}', "'": "'", '"': '"' };
                         const closeChars = [')', ']', '}', "'", '"'];
 
-                        // 1. Умный пропуск: если набираем закрывающую скобку/кавычку, которая уже стоит впереди
                         if (closeChars.includes(e.key) && start === end && val[start] === e.key) {
                             e.preventDefault();
                             e.target.selectionStart = e.target.selectionEnd = start + 1;
                             return;
                         }
 
-                        // 2. Обработка клавиши Tab (вставляем 4 пробела вместо смены фокуса)
                         if (e.key === 'Tab') {
                             e.preventDefault();
                             const spaces = "    ";
@@ -250,28 +275,84 @@ app.index_string = '''
                             return;
                         }
 
-                        // 3. Автозакрытие скобок и кавычек
                         if (pairs[e.key]) {
                             e.preventDefault();
                             const openChar = e.key;
                             const closeChar = pairs[openChar];
-                            
                             if (start !== end) {
-                                // Если текст выделен — оборачиваем его
                                 const selected = val.substring(start, end);
                                 nativeSetter.call(e.target, val.substring(0, start) + openChar + selected + closeChar + val.substring(end));
                                 e.target.selectionStart = start + 1;
                                 e.target.selectionEnd = end + 1;
                             } else {
-                                // Если ничего не выделено — просто ставим пару
                                 nativeSetter.call(e.target, val.substring(0, start) + openChar + closeChar + val.substring(end));
                                 e.target.selectionStart = e.target.selectionEnd = start + 1;
                             }
-                            // Сообщаем React/Dash, что значение изменилось
                             e.target.dispatchEvent(new Event('input', { bubbles: true }));
                         }
                     }
                 });
+
+                function animateCounter(element, endStr) {
+                    let endVal = parseFloat(endStr.replace(/[^\d,-]/g, '').replace(',', '.'));
+                    if (isNaN(endVal)) return;
+
+                    element._isAnimating = true; // БЛОКИРУЕМ OBSERVER НА ВРЕМЯ АНИМАЦИИ
+                    let startVal = 0;
+                    let duration = 1000;
+                    let startTime = null;
+
+                    function step(currentTime) {
+                        if (!startTime) startTime = currentTime;
+                        let progress = Math.min((currentTime - startTime) / duration, 1);
+                        let ease = 1 - Math.pow(1 - progress, 4);
+                        let currentVal = startVal + (endVal - startVal) * ease;
+
+                        if (endStr.includes('₽')) {
+                            element.textContent = currentVal.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ₽';
+                        } else if (endStr.includes('чел.')) {
+                            element.textContent = Math.floor(currentVal).toLocaleString('ru-RU') + ' чел.';
+                        } else if (endStr.includes('ед.')) {
+                            element.textContent = Math.floor(currentVal).toLocaleString('ru-RU') + ' ед.';
+                        } else {
+                            element.textContent = Math.floor(currentVal).toLocaleString('ru-RU');
+                        }
+
+                        if (progress < 1) {
+                            window.requestAnimationFrame(step);
+                        } else {
+                            element.textContent = endStr; 
+                            // Снимаем блокировку с легкой задержкой
+                            setTimeout(() => { element._isAnimating = false; }, 50);
+                        }
+                    }
+                    window.requestAnimationFrame(step);
+                }
+
+                const observer = new MutationObserver((mutations) => {
+                    const cards = document.querySelectorAll('.tilt-card:not(.tilt-init)');
+                    if (cards.length > 0 && window.VanillaTilt) {
+                        VanillaTilt.init(cards, { max: 6, speed: 400, glare: true, "max-glare": 0.2, scale: 1.02 });
+                        cards.forEach(c => c.classList.add('tilt-init'));
+                    }
+
+                    mutations.forEach(mutation => {
+                        if (mutation.type === 'characterData' || mutation.type === 'childList') {
+                            let target = mutation.target;
+                            if (target.nodeType === 3) target = target.parentElement;
+                            
+                            if (target && target.classList && target.classList.contains('kpi-value')) {
+                                let newVal = target.innerText;
+                                if (target._dashValue !== newVal && !target._isAnimating && newVal !== "0") {
+                                    target._dashValue = newVal;
+                                    animateCounter(target, newVal);
+                                }
+                            }
+                        }
+                    });
+                });
+                
+                observer.observe(document.body, { childList: true, subtree: true, characterData: true });
             </script>
         </footer>
     </body>
@@ -403,6 +484,7 @@ def create_kpi_card(
                                     ),
                                     html.H3(
                                         id=id_value,
+                                        className="kpi-value",
                                         style={
                                             "color": "var(--text-main)",
                                             "fontWeight": "800",
@@ -446,13 +528,16 @@ def create_kpi_card(
                 ]
             )
         ],
+        className="tilt-card",
         style={
             "backgroundColor": "var(--card-bg)",
             "border": "none",
             "borderRadius": "24px",
             "boxShadow": "var(--shadow)",
-            "transition": "all 0.3s",
+            "transition": "box-shadow 0.3s",
             "height": "100%",
+            "position": "relative",
+            "overflow": "hidden"
         },
     )
 
