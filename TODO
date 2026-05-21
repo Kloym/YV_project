@@ -1,3 +1,3 @@
 pyinstaller --onefile --clean --name "DB_Parser" --hidden-import "pandas" --hidden-import "openpyxl" app_parser.py
 
-pyinstaller --onefile --clean --name "Clinical_Dashboard" --hidden-import "matplotlib" --hidden-import "pandas" --hidden-import "openpyxl" --hidden-import "duckdb" --hidden-import "flask_caching" --collect-all "dash" --collect-all "dash_bootstrap_components" --collect-all "dash_ag_grid" --collect-all "plotly" test_app_dashboard.py
+pyinstaller --onefile --clean --name "Clinical_Dashboard" --icon="app_icon.ico" --hidden-import "matplotlib" --hidden-import "pandas" --hidden-import "openpyxl" --hidden-import "duckdb" --hidden-import "flask_caching" --collect-all "dash" --collect-all "dash_bootstrap_components" --collect-all "dash_ag_grid" --collect-all "plotly" test_app_dashboard.py
