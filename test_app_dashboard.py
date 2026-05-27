@@ -1,5 +1,8 @@
-import patch_win
 import os
+import sys
+if sys.platform == 'win32':
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 import sqlite3
 import webbrowser
 import io
@@ -17,7 +20,6 @@ from openpyxl.styles import PatternFill
 from flask_caching import Cache
 import cProfile
 import pstats
-import io
 from functools import wraps
 
 
