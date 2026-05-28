@@ -1108,6 +1108,21 @@ app.layout = html.Div(
                             html.Div(
                                 [
                                     html.Button(
+                                        html.I(className="fas fa-question-circle"),
+                                        id="btn-help",
+                                        n_clicks=0,
+                                        title="Как пользоваться дашбордом?",
+                                        className="no-print",
+                                        style={
+                                            "background": "transparent",
+                                            "border": "none",
+                                            "fontSize": "22px",
+                                            "color": "var(--primary)",
+                                            "cursor": "pointer",
+                                            "marginRight": "20px",
+                                        },
+                                    ),
+                                    html.Button(
                                         html.I(className="fas fa-file-pdf"),
                                         id="btn-pdf",
                                         n_clicks=0,
@@ -2358,6 +2373,64 @@ app.layout = html.Div(
             id="patient-modal",
             is_open=False,
             size="xl",
+            centered=True,
+        ),
+        dbc.Modal(
+            [
+                dbc.ModalHeader(
+                    dbc.ModalTitle(
+                        [
+                            html.I(className="fas fa-book-open", style={"marginRight": "10px"}),
+                            "Руководство пользователя",
+                        ],
+                        style={"fontWeight": "800", "color": "var(--primary)"},
+                    )
+                ),
+                dbc.ModalBody(
+                    style={"padding": "30px", "backgroundColor": "var(--bg-color)"},
+                    children=[
+                        html.H5("📈 Стандартный отчет", style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px"}),
+                        html.Ul([
+                            html.Li("Выберите нужные метрики и разрезы в левой панели."),
+                            html.Li([html.B("Интерактивный график: "), "Кликните на любую точку на графике, чтобы открыть ", html.B("глубокую детализацию"), " с Топ-10 значений и медианой."]),
+                            html.Li([html.B("Множественное выделение: "), "Зажмите клавишу ", html.B("Shift"), " и кликайте по нужным точкам, чтобы получить суммарную аналитику по выбранным элементам."]),
+                            html.Li([html.B("Сравнение (YoY): "), "Включите тумблер в левой панели для сравнения текущих фильтров с аналогичным периодом прошлого года."]),
+                            html.Li([html.B("SQL-Песочница: "), "Продвинутый инструмент для написания собственных SQL-запросов. Кликните по иконке расширения для удобной работы в полном экране."]),
+                        ], style={"color": "var(--text-main)", "marginBottom": "25px", "lineHeight": "1.6"}),
+
+                        html.H5("🧪 Улучшенная аналитика", style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px"}),
+                        html.Ul([
+                            html.Li([html.B("Дерево показателей: "), "Иерархическое отображение выручки. Кликните на сектор, чтобы углубиться в него. Переключатель 'Сетка' позволяет увидеть распределение по количеству услуг, а не по сумме."]),
+                            html.Li([html.B("Тепловая карта (Heatmap): "), "Показывает активность отделений по месяцам. Чем темнее цвет, тем выше активность."]),
+                            html.Li([html.B("Сводная таблица: "), "Мощный конструктор отчетов. Перетаскивайте колонки в панель группировки, фильтруйте значения и экспортируйте результат в CSV (иконка Excel)."]),
+                        ], style={"color": "var(--text-main)", "marginBottom": "25px", "lineHeight": "1.6"}),
+
+                        html.H5("💼 Бизнес-аналитика", style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px"}),
+                        html.Ul([
+                            html.Li([html.B("ABC-Анализ: "), "Автоматическое распределение объектов (отделений, профилей, МЭС) по принципу Парето: Группа А (80% выручки), В (15%) и С (5%)."]),
+                            html.Li("Используйте кнопку скачивания для получения цветного Excel-файла с результатами анализа."),
+                        ], style={"color": "var(--text-main)", "marginBottom": "25px", "lineHeight": "1.6"}),
+                        
+                        html.H5("🧑 Карточка пациента", style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px"}),
+                        html.Ul([
+                            html.Li("Введите номер истории болезни (ИБ) в левой панели и нажмите Enter."),
+                            html.Li("Система соберет всю историю визитов, сгруппирует услуги по месяцам и покажет итоговую аналитику."),
+                        ], style={"color": "var(--text-main)", "marginBottom": "10px", "lineHeight": "1.6"}),
+                    ]
+                ),
+                dbc.ModalFooter(
+                    dbc.Button(
+                        "Понятно",
+                        id="btn-close-help",
+                        n_clicks=0,
+                        className="ms-auto",
+                        style={"borderRadius": "12px", "backgroundColor": "var(--primary)", "border": "none"},
+                    )
+                ),
+            ],
+            id="help-modal",
+            is_open=False,
+            size="lg",
             centered=True,
         ),
     ]
@@ -4644,6 +4717,17 @@ app.clientside_callback(
     ],
     prevent_initial_call=True
 )
+
+@app.callback(
+    Output("help-modal", "is_open"),
+    [Input("btn-help", "n_clicks"), Input("btn-close-help", "n_clicks")],
+    [State("help-modal", "is_open")],
+    prevent_initial_call=True,
+)
+def toggle_help_modal(n1, n2, is_open):
+    if n1 or n2:
+        return not is_open
+    return is_open
 
 
 def open_browser():
