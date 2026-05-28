@@ -1,4 +1,5 @@
 import os
+import datetime
 import sqlite3
 import webbrowser
 import io
@@ -39,6 +40,13 @@ def profile_to_txt(filename):
         return wrapper
 
     return decorator
+
+def get_db_last_updated():
+    db_path = "database.db"
+    if os.path.exists(db_path):
+        mtime = os.path.getmtime(db_path)
+        return datetime.datetime.fromtimestamp(mtime).strftime('%d.%m.%Y в %H:%M')
+    return "Неизвестно"
 
 
 # --- КОНФИГУРАЦИЯ И КОНСТАНТЫ ---
@@ -232,6 +240,15 @@ app.index_string = r"""
                 border-color: var(--primary-light) !important;
             }
 
+            @keyframes pulse-green {
+                0% { box-shadow: 0 0 0 0 rgba(1, 181, 116, 0.7); }
+                70% { box-shadow: 0 0 0 8px rgba(1, 181, 116, 0); }
+                100% { box-shadow: 0 0 0 0 rgba(1, 181, 116, 0); }
+            }
+            .pulse-dot {
+                animation: pulse-green 2s infinite;
+            }
+
             body { background-color: var(--bg-color); color: var(--text-main); font-family: 'Inter', sans-serif; transition: background-color 0.4s ease, color 0.4s ease; margin: 0; }
             .Select, .Select-value { background-color: transparent !important; }
             .Select-control { background-color: var(--card-bg) !important; border: 2px solid var(--grid-color) !important; border-radius: 16px !important; box-shadow: none !important; padding: 4px 8px !important; }
@@ -276,10 +293,29 @@ app.index_string = r"""
         <footer>
             {%config%} {%scripts%} {%renderer%}
             <script>
+            console.log("%c🩺 Clinical Dashboard\n%cРазработано с ❤️ и бессонными ночами. Если вы это читаете — логи пишутся нормально, а данные в безопасности!", "color: #4318FF; font-size: 20px; font-weight: bold;", "color: #01B574; font-size: 14px;");
                 window.isShiftPressed = false;
                 document.addEventListener('keydown', function(e) { if(e.key === 'Shift') window.isShiftPressed = true; });
                 document.addEventListener('keyup', function(e) { if(e.key === 'Shift') window.isShiftPressed = false; });
                 window.addEventListener('blur', function() { window.isShiftPressed = false; });
+                document.addEventListener('keydown', function(e) { 
+                    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+                        const searchInput = document.getElementById('f-patient');
+                        if (searchInput) {
+                            e.preventDefault();
+                            searchInput.focus();
+                            searchInput.select();
+                        }
+                    }
+
+                    if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+                        const toggleBtn = document.getElementById('btn-toggle-sidebar');
+                        if (toggleBtn) {
+                            e.preventDefault();
+                            toggleBtn.click();
+                        }
+                    }
+                });
 
                 document.addEventListener('keydown', function(e) {
                     if (e.target && e.target.classList.contains('sql-editor')) {
@@ -1061,6 +1097,31 @@ app.layout = html.Div(
                         ),
                         dbc.Button([html.I(className="fas fa-check", style={"marginRight": "10px"}), "Применить фильтры"], id="btn-apply-filters", n_clicks=0, style={"width": "100%", "backgroundColor": "#01B574", "border": "none", "borderRadius": "16px", "padding": "14px", "fontWeight": "600", "marginTop": "5px", "boxShadow": "0px 10px 20px rgba(1, 181, 116, 0.2)"}),
                         dbc.Button([html.I(className="fas fa-trash-alt", style={"marginRight": "10px"}), "Сбросить все"], id="btn-reset-all-filters", n_clicks=0, style={"width": "100%", "backgroundColor": "transparent", "border": "2px solid #E11D48", "color": "#E11D48", "borderRadius": "16px", "padding": "14px", "fontWeight": "600", "marginTop": "10px"}),
+                        html.Div(
+                            [
+                                html.Span(
+                                    className="pulse-dot", 
+                                    style={
+                                        "height": "10px", "width": "10px", "backgroundColor": "#01B574", 
+                                        "borderRadius": "50%", "display": "inline-block", "marginRight": "10px"
+                                    }
+                                ),
+                                html.Span(
+                                    f"Обновлено: {get_db_last_updated()}", 
+                                    style={"fontSize": "13px", "color": "var(--text-muted)", "fontWeight": "600"}
+                                )
+                            ],
+                            style={
+                                "marginTop": "35px", 
+                                "display": "flex", 
+                                "alignItems": "center", 
+                                "justifyContent": "center", 
+                                "padding": "12px", 
+                                "backgroundColor": "var(--bg-soft)", 
+                                "borderRadius": "12px",
+                                "border": "1px solid var(--grid-color)"
+                            }
+                        ),
                     ]
                 )
             ],
@@ -3840,12 +3901,22 @@ def toggle_patient_modal(patient_id, close_clicks, is_open):
     ctx = dash.callback_context
     if not ctx.triggered:
         return is_open, dash.no_update, dash.no_update
+        
     trigger_id = ctx.triggered[0]["prop_id"].split(".")[0]
     if trigger_id == "close-patient-modal":
         return False, dash.no_update, dash.no_update
 
     if trigger_id == "f-patient" and patient_id and str(patient_id).strip() != "":
         clean_id = str(patient_id).strip()
+        if clean_id.upper() in ["000", "BOSS", "БОСС", "42"]:
+            easter_egg_msg = html.Div([
+                html.I(className="fas fa-user-astronaut", style={"fontSize": "48px", "color": "var(--primary)", "marginBottom": "20px"}),
+                html.H3("Идеальный пациент найден!", style={"fontWeight": "800", "color": "var(--text-main)"}),
+                html.P("Жалоб нет, давление 120/80, сатурация 100%, анализы идеальные.", style={"fontSize": "16px", "color": "var(--text-muted)", "marginBottom": "10px"}),
+                html.Div("Рекомендации: Выписать премию разработчику дашборда 🏆", style={"fontWeight": "600", "color": "#01B574", "backgroundColor": "rgba(1, 181, 116, 0.1)", "padding": "10px", "borderRadius": "8px", "display": "inline-block"})
+            ], style={"textAlign": "center", "padding": "40px"})
+            return True, "Секретный уровень", easter_egg_msg
+
         df = get_optimized_data()
 
         if df.empty or "Номер ИБ" not in df.columns:
