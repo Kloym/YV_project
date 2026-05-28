@@ -22,24 +22,18 @@ CUSTOM_ICON = "data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0
 
 
 def profile_to_txt(filename):
-    """Декоратор для записи результатов профилирования в txt-файл"""
-
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
             profiler = cProfile.Profile()
             profiler.enable()
-
             result = func(*args, **kwargs)
-
             profiler.disable()
             s = io.StringIO()
             ps = pstats.Stats(profiler, stream=s).sort_stats("cumulative")
             ps.print_stats(50)
-
             with open(filename, "w", encoding="utf-8") as f:
                 f.write(s.getvalue())
-
             return result
 
         return wrapper
@@ -517,7 +511,7 @@ def create_kpi_card(
                                             "justifyContent": "center",
                                             "marginLeft": "auto",
                                         },
-                                    )
+                                    ),
                                 ],
                                 width=4,
                                 className="ps-0",
@@ -543,6 +537,326 @@ def create_kpi_card(
 
 
 @cache.memoize(timeout=600)
+def build_tab_1_data(
+    years,
+    quarters,
+    months,
+    depts,
+    profiles,
+    mes_list,
+    patient,
+    metric,
+    group_by_col,
+    theme,
+    yoy_toggle,
+):
+    df = get_optimized_data()
+    if df.empty:
+        return go.Figure(), "Аналитика", "0 ₽", "0", "0", "0", html.Div("Нет данных")
+
+    where_clause = build_where_clause(
+        years, quarters, months, depts, profiles, mes_list, patient
+    )
+    fig = go.Figure()
+    x_range, tickvals, ticktext = None, [], []
+    insight_html = html.Div()
+
+    conn = get_duck_conn(df)
+
+    # --- ТВОЯ ЛОГИКА С DISTINCT ДЛЯ ТОЧНЫХ СУММ ---
+    total_sum = conn.execute(f"""
+        SELECT SUM(Сумма) 
+        FROM (
+            SELECT DISTINCT "Номер ИБ", "Код Услуги", dt, Сумма 
+            FROM df 
+            WHERE {where_clause}
+        )
+        """).fetchone()[0] or 0
+
+    total_patients = (
+        conn.execute(
+            f'SELECT COUNT(DISTINCT "ИД пациента в версии счета") FROM df WHERE {where_clause}'
+        ).fetchone()[0]
+        or 0
+    )
+
+    total_mes = conn.execute(f"""
+        SELECT COUNT(*) 
+        FROM (
+            SELECT DISTINCT "Номер ИБ", "Код Услуги", dt 
+            FROM df 
+            WHERE {where_clause}
+        )
+        """).fetchone()[0] or 0
+
+    active_depts = (
+        conn.execute(
+            f'SELECT COUNT(DISTINCT "Наименование отделения") FROM df WHERE {where_clause}'
+        ).fetchone()[0]
+        or 0
+    )
+
+    dates_info = conn.execute(
+        f"SELECT MIN(dt), MAX(dt) FROM df WHERE {where_clause}"
+    ).fetchone()
+
+    if dates_info[0] is not None:
+        min_dt, max_dt = pd.Timestamp(dates_info[0]), pd.Timestamp(dates_info[1])
+        x_range = [min_dt - pd.Timedelta(days=3), max_dt + pd.Timedelta(days=3)]
+
+        unique_dates_df = conn.execute(
+            f"SELECT DISTINCT dt FROM df WHERE {where_clause} AND dt IS NOT NULL ORDER BY dt"
+        ).df()
+        unique_dates = unique_dates_df["dt"].tolist()
+        tickvals = unique_dates
+        ticktext = [
+            f"{MONTHS_RU[pd.Timestamp(d).month]} {pd.Timestamp(d).year}"
+            for d in unique_dates
+        ]
+
+        if group_by_col in df.columns:
+            if metric == "sum":
+                query = f'SELECT dt, "{group_by_col}", SUM(Сумма) as val FROM (SELECT DISTINCT "Номер ИБ", "Код Услуги", dt, "{group_by_col}", Сумма FROM df WHERE {where_clause}) GROUP BY dt, "{group_by_col}"'
+            elif metric == "count_patients":
+                query = f'SELECT dt, "{group_by_col}", COUNT(DISTINCT "ИД пациента в версии счета") as val FROM df WHERE {where_clause} GROUP BY dt, "{group_by_col}"'
+            else:
+                query = f'SELECT dt, "{group_by_col}", COUNT(*) as val FROM df WHERE {where_clause} GROUP BY dt, "{group_by_col}"'
+
+            trend = conn.execute(query).df().sort_values("dt")
+            top_query = f'SELECT "{group_by_col}" FROM trend GROUP BY "{group_by_col}" ORDER BY SUM(val) DESC LIMIT 5'
+            top_groups = [row[0] for row in conn.execute(top_query).fetchall()]
+
+            colors = [
+                {"hex": "#4318FF", "rgba": "rgba(67, 24, 255, 0.15)"},
+                {"hex": "#FF7D00", "rgba": "rgba(255, 125, 0, 0.15)"},
+                {"hex": "#01B574", "rgba": "rgba(1, 181, 116, 0.15)"},
+                {"hex": "#39B8FF", "rgba": "rgba(57, 184, 255, 0.15)"},
+                {"hex": "#E11D48", "rgba": "rgba(225, 29, 72, 0.15)"},
+            ]
+
+            for i, group_val in enumerate(top_groups):
+                g_data = trend[trend[group_by_col] == group_val]
+                c = colors[i % len(colors)]
+                custom_data_formatted = [f"STD|{group_val}"] * len(g_data)
+
+                fig.add_trace(
+                    go.Scatter(
+                        x=g_data["dt"],
+                        y=g_data["val"],
+                        name=str(group_val)[:32] + "...",
+                        mode="lines+markers",
+                        line=dict(
+                            width=4, shape="spline", smoothing=1.3, color=c["hex"]
+                        ),
+                        marker=dict(size=12, color=c["hex"]),
+                        fill="tozeroy",
+                        fillcolor=c["rgba"],
+                        customdata=custom_data_formatted,
+                    )
+                )
+
+        if "trend" in locals() and not trend.empty:
+            if metric == "sum":
+                monthly = conn.execute(
+                    f'SELECT Month_Str, SUM(Сумма) as val FROM (SELECT DISTINCT "Номер ИБ", "Код Услуги", Month_Str, Сумма FROM df WHERE {where_clause}) GROUP BY Month_Str ORDER BY Month_Str'
+                ).df()
+                lbl, fmt = "Общая сумма", lambda x: f"{x:,.2f} ₽".replace(",", " ")
+            elif metric == "count_patients":
+                monthly = conn.execute(
+                    f'SELECT Month_Str, COUNT(DISTINCT "ИД пациента в версии счета") as val FROM df WHERE {where_clause} GROUP BY Month_Str ORDER BY Month_Str'
+                ).df()
+                lbl, fmt = "Уникальные пациенты", lambda x: f"{x:,.0f} чел.".replace(
+                    ",", " "
+                )
+            else:
+                monthly = conn.execute(
+                    f"SELECT Month_Str, COUNT(*) as val FROM df WHERE {where_clause} GROUP BY Month_Str ORDER BY Month_Str"
+                ).df()
+                lbl, fmt = "Оказано услуг", lambda x: f"{x:,.0f} ед.".replace(",", " ")
+
+            if len(monthly) >= 2:
+                val_first, val_last = monthly.iloc[0]["val"], monthly.iloc[-1]["val"]
+                diff = val_last - val_first
+                pct = (diff / val_first * 100) if val_first > 0 else 0
+                color, icon, sign = (
+                    ("#01B574", "fa-arrow-up", "+")
+                    if diff >= 0
+                    else ("#E11D48", "fa-arrow-down", "")
+                )
+                insight_html = html.Div(
+                    [
+                        html.Div(
+                            [
+                                html.I(
+                                    className="fas fa-robot",
+                                    style={
+                                        "marginRight": "8px",
+                                        "color": "var(--primary)",
+                                    },
+                                ),
+                                html.B("Сводка:"),
+                            ],
+                            style={"marginBottom": "10px", "fontSize": "16px"},
+                        ),
+                        html.Span(
+                            f"Показатель «{lbl}» изменился с {fmt(val_first)} до {fmt(val_last)}. Разница: "
+                        ),
+                        html.Span(
+                            [
+                                html.I(
+                                    className=f"fas {icon}",
+                                    style={"marginRight": "5px"},
+                                ),
+                                f"{sign}{fmt(diff)} ({sign}{pct:.1f}%)",
+                            ],
+                            style={
+                                "color": color,
+                                "fontWeight": "800",
+                                "backgroundColor": f"{color}20",
+                                "padding": "4px 8px",
+                                "borderRadius": "6px",
+                                "marginLeft": "8px",
+                            },
+                        ),
+                    ]
+                )
+
+    fig = apply_beautiful_layout(fig, theme, x_range, tickvals, ticktext)
+    fig.update_xaxes(rangeslider_visible=False)
+    fig.update_layout(clickmode="event+select")
+
+    str_total_sum = f"{total_sum:,.2f} ₽".replace(",", " ").replace(".", ",")
+    return (
+        fig,
+        "Аналитика по времени",
+        str_total_sum,
+        str(total_patients),
+        str(total_mes),
+        str(active_depts),
+        insight_html,
+    )
+
+
+@cache.memoize(timeout=600)
+def build_tab_2_data(
+    years,
+    quarters,
+    months,
+    depts,
+    profiles,
+    mes_list,
+    patient,
+    metric,
+    theme,
+    tree_mode=None,
+):
+    df = get_optimized_data()
+    if df.empty:
+        return go.Figure(), go.Figure()
+
+    where_clause = build_where_clause(
+        years, quarters, months, depts, profiles, mes_list, patient
+    )
+    sunburst_fig, heatmap_fig = go.Figure(), go.Figure()
+    conn = get_duck_conn(df)
+
+    has_data = (
+        conn.execute(f"SELECT COUNT(*) FROM df WHERE {where_clause}").fetchone()[0] > 0
+    )
+    if not has_data:
+        return go.Figure(), go.Figure()
+
+    if "Month_Str" in df.columns and "Наименование отделения" in df.columns:
+        if metric == "sum":
+            query_hm = f'SELECT "Наименование отделения", "Month_Str", SUM(Сумма) as val FROM (SELECT DISTINCT "Номер ИБ", "Код Услуги", "Month_Str", "Наименование отделения", Сумма FROM df WHERE {where_clause}) GROUP BY "Наименование отделения", "Month_Str"'
+        elif metric == "count_patients":
+            query_hm = f'SELECT "Наименование отделения", "Month_Str", COUNT(DISTINCT "ИД пациента в версии счета") as val FROM df WHERE {where_clause} GROUP BY "Наименование отделения", "Month_Str"'
+        else:
+            query_hm = f'SELECT "Наименование отделения", "Month_Str", COUNT(*) as val FROM df WHERE {where_clause} GROUP BY "Наименование отделения", "Month_Str"'
+
+        hm_data = conn.execute(query_hm).df()
+        pivot = hm_data.pivot(
+            index="Наименование отделения", columns="Month_Str", values="val"
+        ).fillna(0)
+        heatmap_fig.add_trace(
+            go.Heatmap(
+                z=pivot.values,
+                x=pivot.columns,
+                y=pivot.index,
+                colorscale="Blues" if theme == "light" else "Viridis",
+            )
+        )
+        heatmap_fig = apply_beautiful_layout(heatmap_fig, theme)
+        heatmap_fig.update_layout(
+            height=max(400, (len(pivot.index) * 35) + 150),
+            xaxis=dict(showgrid=False, type="category"),
+            yaxis=dict(showgrid=False, automargin=True, tickfont=dict(size=11)),
+        )
+
+    if set(["Наименование отделения", "Код Услуги"]).issubset(df.columns):
+
+        query_tree = f"""
+            SELECT 
+                "Наименование отделения", 
+                "Код Услуги", 
+                SUM(Сумма) as Сумма, 
+                COUNT(*) as count_val 
+            FROM (
+                SELECT DISTINCT "Номер ИБ", "Код Услуги", "Наименование отделения", Сумма 
+                FROM df WHERE {where_clause}
+            ) 
+            GROUP BY "Наименование отделения", "Код Услуги" 
+        """
+        df_sun = conn.execute(query_tree).df()
+
+        for col_name in ["Наименование отделения", "Код Услуги"]:
+            df_sun[col_name] = df_sun[col_name].fillna("Неизвестно")
+
+        val_col = "Сумма" if metric == "sum" else "count_val"
+        df_sun = df_sun.nlargest(150, val_col)
+
+        is_equal_mode = tree_mode and "equal" in tree_mode
+
+        if is_equal_mode:
+            df_sun["равный_вес"] = 1
+            target_values = "равный_вес"
+        else:
+            target_values = val_col
+
+        sunburst_fig = px.treemap(
+            df_sun,
+            path=["Наименование отделения", "Код Услуги"],
+            values=target_values,
+            color="Сумма" if metric == "sum" else None,
+            color_continuous_scale="Blues",
+        )
+
+        if is_equal_mode:
+            ht_template = "<b>%{label}</b><br>Parent_id: %{parent}<br>Кол-во уникальных МЭС внутри: %{value} шт.<extra></extra>"
+        elif metric == "sum":
+            ht_template = "<b>%{label}</b><br>Parent_id: %{parent}<br>Сумма: %{value:,.2f} ₽<extra></extra>"
+        else:
+            ht_template = "<b>%{label}</b><br>Parent_id: %{parent}<br>Оказано услуг (без дублей): %{value:,.0f} шт.<extra></extra>"
+
+        sunburst_fig.update_traces(
+            maxdepth=2,
+            pathbar=dict(
+                visible=True, textfont=dict(size=14, family="Inter", color="#1b2559")
+            ),
+            root_color="#e9edf7",
+            marker=dict(line=dict(width=2, color="#ffffff")),
+            texttemplate="<b>%{label}</b>",
+            hovertemplate=ht_template,
+        )
+
+        sunburst_fig.update_layout(
+            margin=dict(t=45, l=10, r=10, b=10), paper_bgcolor="rgba(0,0,0,0)"
+        )
+
+    return sunburst_fig, heatmap_fig
+
+
+@cache.memoize(timeout=600)
 def build_abc_data(years, quarters, months, depts, profiles, mes_list, group_by):
     df = get_optimized_data()
     if df.empty or "Сумма" not in df.columns or group_by not in df.columns:
@@ -558,18 +872,44 @@ def build_abc_data(years, quarters, months, depts, profiles, mes_list, group_by)
         return pd.DataFrame()
 
     query_abc = f"""
-        SELECT "{group_by}" AS key_col,
-               SUM(Сумма) as Сумма,
-               COUNT(DISTINCT "Номер ИБ") as Кол_во_услуг
+        SELECT "{group_by}" AS key_col, SUM(Сумма) as Сумма, COUNT(DISTINCT "Номер ИБ") as Кол_во_услуг
         FROM (
             SELECT DISTINCT "Номер ИБ", "Код Услуги", "{group_by}", Сумма
-            FROM df
-            WHERE {where_clause}
+            FROM df WHERE {where_clause}
         )
-        GROUP BY "{group_by}"
-        ORDER BY Сумма DESC
+        GROUP BY "{group_by}" ORDER BY Сумма DESC
     """
     return conn.execute(query_abc).df()
+
+
+def to_tuple(val):
+    return tuple(val) if isinstance(val, list) else val
+
+
+def clean_sqls(lst):
+    return ", ".join([f"'{str(x).replace(chr(39), chr(39)+chr(39))}'" for x in lst])
+
+
+def build_where_clause(
+    years, quarters, months, depts, profiles, mes_list, patient=None
+):
+    conditions = ["1=1"]
+    if years:
+        conditions.append(f'"Year" IN ({", ".join(map(str, years))})')
+    if quarters:
+        conditions.append(f'"Quarter_Name" IN ({clean_sqls(quarters)})')
+    if months:
+        conditions.append(f'"Month_Name" IN ({clean_sqls(months)})')
+    if depts:
+        conditions.append(f'"Наименование отделения" IN ({clean_sqls(depts)})')
+    if profiles:
+        conditions.append(f'"Наименование профиля" IN ({clean_sqls(profiles)})')
+    if mes_list:
+        conditions.append(f'"Код Услуги" IN ({clean_sqls(mes_list)})')
+    if patient and str(patient).strip() != "":
+        safe_pat = str(patient).strip().replace("'", "''")
+        conditions.append(f"CAST(\"Номер ИБ\" AS VARCHAR) ILIKE '%{safe_pat}%'")
+    return " AND ".join(conditions)
 
 
 # --- ВЕРСТКА ИНТЕРФЕЙСА ---
@@ -596,15 +936,14 @@ app.layout = html.Div(
             children=[
                 html.Div(
                     [
-                        html.H3(
-                            "ГКБ им. Вересаева",
+                        html.Img(
+                            src=CUSTOM_ICON,
                             style={
-                                "color": "var(--text-main)",
-                                "fontWeight": "800",
-                                "margin": 0,
-                                "letterSpacing": "-1px",
+                                "height": "60px",
+                                "width": "auto",
+                                "display": "block",
                             },
-                        ),
+                        )
                     ],
                     style={
                         "marginBottom": "35px",
@@ -867,8 +1206,7 @@ app.layout = html.Div(
                 dbc.Button(
                     [
                         html.I(
-                            className="fas fa-trash-alt",
-                            style={"marginRight": "10px"},
+                            className="fas fa-trash-alt", style={"marginRight": "10px"}
                         ),
                         "Сбросить все",
                     ],
@@ -887,11 +1225,7 @@ app.layout = html.Div(
             ],
         ),
         html.Div(
-            style={
-                "marginLeft": "340px",
-                "padding": "40px 50px",
-                "minHeight": "100vh",
-            },
+            style={"marginLeft": "340px", "padding": "40px 50px", "minHeight": "100vh"},
             children=[
                 dbc.Row(
                     [
@@ -913,6 +1247,7 @@ app.layout = html.Div(
                                     html.Button(
                                         html.I(className="fas fa-file-pdf"),
                                         id="btn-pdf",
+                                        n_clicks=0,
                                         className="no-print",
                                         style={
                                             "background": "transparent",
@@ -1168,7 +1503,30 @@ app.layout = html.Div(
                                                                                 },
                                                                                 placeholder="Введите ваш SQL запрос...",
                                                                                 value="SELECT \n  [Наименование отделения], \n  COUNT(*) as [Количество услуг] \nFROM medical_data \nGROUP BY [Наименование отделения] \nORDER BY [Количество услуг] DESC \nLIMIT 7;",
-                                                                            )
+                                                                            ),
+                                                                            html.Button(
+                                                                                html.I(
+                                                                                    className="fas fa-expand"
+                                                                                ),
+                                                                                id="btn-expand-sql",
+                                                                                n_clicks=0,
+                                                                                title="Полноэкранный редактор",
+                                                                                className="no-print",
+                                                                                style={
+                                                                                    "position": "absolute",
+                                                                                    "top": "12px",
+                                                                                    "right": "12px",
+                                                                                    "background": "var(--primary-light)",
+                                                                                    "border": "none",
+                                                                                    "borderRadius": "8px",
+                                                                                    "padding": "8px 12px",
+                                                                                    "color": "var(--primary)",
+                                                                                    "fontSize": "16px",
+                                                                                    "cursor": "pointer",
+                                                                                    "transition": "all 0.3s",
+                                                                                    "zIndex": "10",
+                                                                                },
+                                                                            ),
                                                                         ],
                                                                     ),
                                                                     dbc.Button(
@@ -1182,6 +1540,7 @@ app.layout = html.Div(
                                                                             "Выполнить SQL",
                                                                         ],
                                                                         id="btn-execute-sql",
+                                                                        n_clicks=0,
                                                                         style={
                                                                             "backgroundColor": "var(--primary)",
                                                                             "border": "none",
@@ -1592,6 +1951,7 @@ app.layout = html.Div(
                                                                                     className="fas fa-file-csv"
                                                                                 ),
                                                                                 id="btn-export-grid",
+                                                                                n_clicks=0,
                                                                                 title="Скачать таблицу (CSV)",
                                                                                 className="no-print",
                                                                                 style={
@@ -1685,6 +2045,7 @@ app.layout = html.Div(
                                                                             className="fas fa-file-excel"
                                                                         ),
                                                                         id="btn-export-abc",
+                                                                        n_clicks=0,
                                                                         title="Скачать цветной Excel",
                                                                         className="no-print",
                                                                         style={
@@ -1701,6 +2062,13 @@ app.layout = html.Div(
                                                                     "justifyContent": "space-between",
                                                                     "alignItems": "center",
                                                                     "marginBottom": "15px",
+                                                                },
+                                                            ),
+                                                            html.P(
+                                                                "Классификация по правилу Парето (Группа А: приносит 80% выручки, Группа В: 15%, Группа С: 5%).",
+                                                                style={
+                                                                    "color": "var(--text-muted)",
+                                                                    "marginBottom": "20px",
                                                                 },
                                                             ),
                                                             html.Label(
@@ -2063,6 +2431,7 @@ app.layout = html.Div(
                         dbc.Button(
                             "Отмена",
                             id="btn-close-sql-modal",
+                            n_clicks=0,
                             style={
                                 "backgroundColor": "transparent",
                                 "border": "none",
@@ -2080,6 +2449,7 @@ app.layout = html.Div(
                                 "Сохранить и Применить",
                             ],
                             id="btn-save-sql-modal",
+                            n_clicks=0,
                             style={
                                 "backgroundColor": "var(--primary)",
                                 "border": "none",
@@ -2131,324 +2501,98 @@ app.layout = html.Div(
 )
 
 
-def to_tuple(val):
-    return tuple(val) if isinstance(val, list) else val
-
-
-def clean_sqls(lst):
-    return ", ".join([f"'{str(x).replace(chr(39), chr(39)+chr(39))}'" for x in lst])
-
-
-def build_where_clause(
-    years, quarters, months, depts, profiles, mes_list, patient=None
-):
-    conditions = ["1=1"]
-    if years:
-        conditions.append(f'"Year" IN ({", ".join(map(str, years))})')
-    if quarters:
-        conditions.append(f'"Quarter_Name" IN ({clean_sqls(quarters)})')
-    if months:
-        conditions.append(f'"Month_Name" IN ({clean_sqls(months)})')
-    if depts:
-        conditions.append(f'"Наименование отделения" IN ({clean_sqls(depts)})')
-    if profiles:
-        conditions.append(f'"Наименование профиля" IN ({clean_sqls(profiles)})')
-    if mes_list:
-        conditions.append(f'"Код Услуги" IN ({clean_sqls(mes_list)})')
-    if patient and str(patient).strip() != "":
-        safe_pat = str(patient).strip().replace("'", "''")
-        conditions.append(f"CAST(\"Номер ИБ\" AS VARCHAR) ILIKE '%{safe_pat}%'")
-    return " AND ".join(conditions)
-
-
-@cache.memoize(timeout=600)
-def build_tab_1_data(
-    years,
-    quarters,
-    months,
-    depts,
-    profiles,
-    mes_list,
-    patient,
-    metric,
-    group_by_col,
-    theme,
-    yoy_toggle,
-):
+# 🚀 0. ОБНОВЛЕННЫЙ CALLBACK ДЛЯ ФИЛЬТРОВ (Чтобы не были пустые)
+@app.callback(
+    [
+        Output("f-year", "options"),
+        Output("f-quarter", "options"),
+        Output("f-month", "options"),
+        Output("f-dept", "options"),
+        Output("f-profile", "options"),
+        Output("f-mes", "options"),
+    ],
+    [
+        Input("f-year", "value"),
+        Input("f-quarter", "value"),
+        Input("f-month", "value"),
+        Input("f-dept", "value"),
+        Input("f-profile", "value"),
+        Input("f-mes", "value"),
+        Input("f-patient", "value"),
+    ],
+)
+def update_smart_filters(years, quarters, months, depts, profiles, mes_list, patient):
     df = get_optimized_data()
     if df.empty:
-        return go.Figure(), "Аналитика", "0 ₽", "0", "0", "0", html.Div("Нет данных")
-    where_clause = build_where_clause(
-        years, quarters, months, depts, profiles, mes_list, patient
-    )
-    fig = go.Figure()
-    x_range, tickvals, ticktext = None, [], []
-    insight_html = html.Div()
-    conn = get_duck_conn(df)
+        return [[], [], [], [], [], []]
 
-    total_sum = conn.execute(
-        f'''
-        SELECT SUM(Сумма) 
-        FROM (
-            SELECT DISTINCT "Номер ИБ", "Код Услуги", dt, Сумма 
-            FROM df 
-            WHERE {where_clause}
-        )
-        '''
-    ).fetchone()[0] or 0
-    total_patients = (
-        conn.execute(
-            f'SELECT COUNT(DISTINCT "ИД пациента в версии счета") FROM df WHERE {where_clause}'
-        ).fetchone()[0]
-        or 0
-    )
-    total_mes = (
-        conn.execute(f"SELECT COUNT(*) FROM df WHERE {where_clause}").fetchone()[0] or 0
-    )
-    active_depts = (
-        conn.execute(
-            f'SELECT COUNT(DISTINCT "Наименование отделения") FROM df WHERE {where_clause}'
-        ).fetchone()[0]
-        or 0
-    )
+    def get_mask_for(skip_col: str):
+        mask = pd.Series(True, index=df.index)
+        if skip_col != "Year" and years:
+            mask &= df["Year"].isin(years)
+        if skip_col != "Quarter" and quarters:
+            mask &= df["Quarter_Name"].isin(quarters)
+        if skip_col != "Month" and months:
+            mask &= df["Month_Name"].isin(months)
+        if skip_col != "Dept" and depts:
+            mask &= df["Наименование отделения"].isin(depts)
+        if skip_col != "Profile" and profiles:
+            mask &= df["Наименование профиля"].isin(profiles)
+        if skip_col != "MES" and mes_list:
+            mask &= df["Код Услуги"].isin(mes_list)
+        if patient and "Номер ИБ" in df.columns:
+            mask &= df["Номер ИБ"].astype(str).str.contains(str(patient), case=False)
+        return mask
 
-    dates_info = conn.execute(
-        f"SELECT MIN(dt), MAX(dt) FROM df WHERE {where_clause}"
-    ).fetchone()
-    if dates_info[0] is not None:
-        min_dt, max_dt = pd.Timestamp(dates_info[0]), pd.Timestamp(dates_info[1])
-        x_range = [min_dt - pd.Timedelta(days=3), max_dt + pd.Timedelta(days=3)]
-        unique_dates_df = conn.execute(
-            f"SELECT DISTINCT dt FROM df WHERE {where_clause} AND dt IS NOT NULL ORDER BY dt"
-        ).df()
-        unique_dates = unique_dates_df["dt"].tolist()
-        tickvals = unique_dates
-        ticktext = [
-            f"{MONTHS_RU[pd.Timestamp(d).month]} {pd.Timestamp(d).year}"
-            for d in unique_dates
+    opts_year = (
+        sorted(df.loc[get_mask_for("Year"), "Year"].unique())
+        if "Year" in df.columns
+        else []
+    )
+    opts_quarter = (
+        [
+            {"label": row["Quarter_Name"], "value": row["Quarter_Name"]}
+            for _, row in df.loc[get_mask_for("Quarter")]
+            .drop_duplicates(["Quarter_Num", "Quarter_Name"])
+            .sort_values("Quarter_Num")
+            .iterrows()
         ]
-
-        if group_by_col in df.columns:
-            if metric == "sum": 
-                query = f'SELECT dt, "{group_by_col}", SUM(Сумма) as val FROM (SELECT DISTINCT "Номер ИБ", "Код Услуги", dt, "{group_by_col}", Сумма FROM df WHERE {where_clause}) GROUP BY dt, "{group_by_col}"'
-            elif metric == "count_patients":
-                query = f'SELECT dt, "{group_by_col}", COUNT(DISTINCT "ИД пациента в версии счета") as val FROM df WHERE {where_clause} GROUP BY dt, "{group_by_col}"'
-            else:
-                query = f'SELECT dt, "{group_by_col}", COUNT(*) as val FROM df WHERE {where_clause} GROUP BY dt, "{group_by_col}"'
-
-            trend = conn.execute(query).df().sort_values("dt")
-            top_query = f'SELECT "{group_by_col}" FROM trend GROUP BY "{group_by_col}" ORDER BY SUM(val) DESC LIMIT 5'
-            top_groups = [row[0] for row in conn.execute(top_query).fetchall()]
-            colors = [
-                {"hex": "#4318FF", "rgba": "rgba(67, 24, 255, 0.15)"},
-                {"hex": "#FF7D00", "rgba": "rgba(255, 125, 0, 0.15)"},
-                {"hex": "#01B574", "rgba": "rgba(1, 181, 116, 0.15)"},
-                {"hex": "#39B8FF", "rgba": "rgba(57, 184, 255, 0.15)"},
-                {"hex": "#E11D48", "rgba": "rgba(225, 29, 72, 0.15)"},
-            ]
-            for i, group_val in enumerate(top_groups):
-                g_data = trend[trend[group_by_col] == group_val]
-                c = colors[i % len(colors)]
-                custom_data_formatted = [f"STD|{group_val}"] * len(g_data)
-                fig.add_trace(
-                    go.Scatter(
-                        x=g_data["dt"],
-                        y=g_data["val"],
-                        name=str(group_val)[:32] + "...",
-                        mode="lines+markers",
-                        line=dict(
-                            width=4, shape="spline", smoothing=1.3, color=c["hex"]
-                        ),
-                        marker=dict(size=12, color=c["hex"]),
-                        fill="tozeroy",
-                        fillcolor=c["rgba"],
-                        customdata=custom_data_formatted,
-                    )
-                )
-
-    if 'trend' in locals() and not trend.empty:
-        if metric == "sum":
-            monthly = conn.execute(f'SELECT Month_Str, SUM(Сумма) as val FROM (SELECT DISTINCT "Номер ИБ", "Код Услуги", Month_Str, Сумма FROM df WHERE {where_clause}) GROUP BY Month_Str ORDER BY Month_Str').df()
-            lbl, fmt = "Общая сумма", lambda x: f"{x:,.2f} ₽".replace(',',' ')
-        elif metric == "count_patients":
-            monthly = conn.execute(
-                f'SELECT Month_Str, COUNT(DISTINCT "ИД пациента в версии счета") as val FROM df WHERE {where_clause} GROUP BY Month_Str ORDER BY Month_Str'
-            ).df()
-            lbl, fmt = "Уникальные пациенты", lambda x: f"{x:,.0f} чел.".replace(
-                ",", " "
-            )
-        else:
-            monthly = conn.execute(
-                f"SELECT Month_Str, COUNT(*) as val FROM df WHERE {where_clause} GROUP BY Month_Str ORDER BY Month_Str"
-            ).df()
-            lbl, fmt = "Оказано услуг", lambda x: f"{x:,.0f} ед.".replace(",", " ")
-
-        if len(monthly) >= 2:
-            val_first, val_last = monthly.iloc[0]["val"], monthly.iloc[-1]["val"]
-            diff = val_last - val_first
-            pct = (diff / val_first * 100) if val_first > 0 else 0
-            color, icon, sign = (
-                ("#01B574", "fa-arrow-up", "+")
-                if diff >= 0
-                else ("#E11D48", "fa-arrow-down", "")
-            )
-            insight_html = html.Div(
-                [
-                    html.Div(
-                        [
-                            html.I(
-                                className="fas fa-robot",
-                                style={"marginRight": "8px", "color": "var(--primary)"},
-                            ),
-                            html.B("Сводка:"),
-                        ],
-                        style={"marginBottom": "10px", "fontSize": "16px"},
-                    ),
-                    html.Span(
-                        f"Показатель «{lbl}» изменился с {fmt(val_first)} до {fmt(val_last)}. Разница: "
-                    ),
-                    html.Span(
-                        [
-                            html.I(
-                                className=f"fas {icon}", style={"marginRight": "5px"}
-                            ),
-                            f"{sign}{fmt(diff)} ({sign}{pct:.1f}%)",
-                        ],
-                        style={
-                            "color": color,
-                            "fontWeight": "800",
-                            "backgroundColor": f"{color}20",
-                            "padding": "4px 8px",
-                            "borderRadius": "6px",
-                            "marginLeft": "8px",
-                        },
-                    ),
-                ]
-            )
-    fig = apply_beautiful_layout(fig, theme, x_range, tickvals, ticktext)
-    fig.update_xaxes(rangeslider_visible=False)
-    fig.update_layout(clickmode="event+select")
-    str_total_sum = f"{total_sum:,.2f} ₽".replace(",", " ").replace(".", ",")
-    return (
-        fig,
-        "Аналитика по времени",
-        str_total_sum,
-        str(total_patients),
-        str(total_mes),
-        str(active_depts),
-        insight_html,
+        if "Quarter_Num" in df.columns
+        else []
+    )
+    opts_month = (
+        [
+            {"label": row["Month_Name"], "value": row["Month_Name"]}
+            for _, row in df.loc[get_mask_for("Month")]
+            .drop_duplicates(["Month_Num", "Month_Name"])
+            .sort_values("Month_Num")
+            .iterrows()
+        ]
+        if "Month_Num" in df.columns
+        else []
+    )
+    opts_dept = (
+        sorted(df.loc[get_mask_for("Dept"), "Наименование отделения"].dropna().unique())
+        if "Наименование отделения" in df.columns
+        else []
+    )
+    opts_profile = (
+        sorted(
+            df.loc[get_mask_for("Profile"), "Наименование профиля"].dropna().unique()
+        )
+        if "Наименование профиля" in df.columns
+        else []
+    )
+    opts_mes = (
+        sorted(df.loc[get_mask_for("MES"), "Код Услуги"].dropna().unique())
+        if "Код Услуги" in df.columns
+        else []
     )
 
-
-@cache.memoize(timeout=600)
-def build_tab_2_data(
-    years,
-    quarters,
-    months,
-    depts,
-    profiles,
-    mes_list,
-    patient,
-    metric,
-    theme,
-    tree_mode=None,
-):
-    df = get_optimized_data()
-    if df.empty:
-        return go.Figure(), go.Figure()
-    where_clause = build_where_clause(
-        years, quarters, months, depts, profiles, mes_list, patient
-    )
-    sunburst_fig, heatmap_fig = go.Figure(), go.Figure()
-    conn = get_duck_conn(df)
-    has_data = (
-        conn.execute(f"SELECT COUNT(*) FROM df WHERE {where_clause}").fetchone()[0] > 0
-    )
-    if not has_data:
-        return go.Figure(), go.Figure()
-
-    if 'Month_Str' in df.columns and 'Наименование отделения' in df.columns:
-        if metric == "sum": 
-            query_hm = f'SELECT "Наименование отделения", "Month_Str", SUM(Сумма) as val FROM (SELECT DISTINCT "Номер ИБ", "Код Услуги", "Month_Str", "Наименование отделения", Сумма FROM df WHERE {where_clause}) GROUP BY "Наименование отделения", "Month_Str"'
-        elif metric == "count_patients":  
-            query_hm = f'SELECT "Наименование отделения", "Month_Str", COUNT(DISTINCT "ИД пациента в версии счета") as val FROM df WHERE {where_clause} GROUP BY "Наименование отделения", "Month_Str"'
-        else:
-            query_hm = f'SELECT "Наименование отделения", "Month_Str", COUNT(*) as val FROM df WHERE {where_clause} GROUP BY "Наименование отделения", "Month_Str"'
-        hm_data = conn.execute(query_hm).df()
-        pivot = hm_data.pivot(
-            index="Наименование отделения", columns="Month_Str", values="val"
-        ).fillna(0)
-        heatmap_fig.add_trace(
-            go.Heatmap(
-                z=pivot.values,
-                x=pivot.columns,
-                y=pivot.index,
-                colorscale="Blues" if theme == "light" else "Viridis",
-            )
-        )
-        heatmap_fig = apply_beautiful_layout(heatmap_fig, theme)
-        heatmap_fig.update_layout(
-            height=max(400, (len(pivot.index) * 35) + 150),
-            xaxis=dict(showgrid=False, type="category"),
-            yaxis=dict(showgrid=False, automargin=True, tickfont=dict(size=11)),
-        )
-
-    if set(['Наименование отделения', 'Код Услуги']).issubset(df.columns):
-        query_tree = f"""
-            SELECT 
-                "Наименование отделения", 
-                "Код Услуги", 
-                SUM(Сумма) as Сумма, 
-                COUNT(*) as count_val 
-            FROM (
-                SELECT DISTINCT "Номер ИБ", "Код Услуги", "Наименование отделения", Сумма 
-                FROM df WHERE {where_clause}
-            ) 
-            GROUP BY "Наименование отделения", "Код Услуги" 
-        """
-        df_sun = conn.execute(query_tree).df()
-        for col_name in ["Наименование отделения", "Код Услуги"]:
-            df_sun[col_name] = df_sun[col_name].fillna("Неизвестно")
-        val_col = "Сумма" if metric == "sum" else "count_val"
-        df_sun = df_sun.nlargest(150, val_col)
-        is_equal_mode = tree_mode and "equal" in tree_mode
-        target_values = "равный_вес" if is_equal_mode else val_col
-        if is_equal_mode:
-            df_sun["равный_вес"] = 1
-
-        sunburst_fig = px.treemap(
-            df_sun,
-            path=["Наименование отделения", "Код Услуги"],
-            values=target_values,
-            color="Сумма" if metric == "sum" else None,
-            color_continuous_scale="Blues",
-        )
-        ht_template = (
-            "<b>%{label}</b><br>Parent_id: %{parent}<br>Кол-во уникальных МЭС внутри: %{value} шт.<extra></extra>"
-            if is_equal_mode
-            else (
-                "<b>%{label}</b><br>Parent_id: %{parent}<br>Сумма: %{value:,.2f} ₽<extra></extra>"
-                if metric == "sum"
-                else "<b>%{label}</b><br>Parent_id: %{parent}<br>Оказано услуг (без дублей): %{value:,.0f} шт.<extra></extra>"
-            )
-        )
-        sunburst_fig.update_traces(
-            maxdepth=2,
-            pathbar=dict(
-                visible=True, textfont=dict(size=14, family="Inter", color="#1b2559")
-            ),
-            root_color="#e9edf7",
-            marker=dict(line=dict(width=2, color="#ffffff")),
-            texttemplate="<b>%{label}</b>",
-            hovertemplate=ht_template,
-        )
-        sunburst_fig.update_layout(
-            margin=dict(t=45, l=10, r=10, b=10), paper_bgcolor="rgba(0,0,0,0)"
-        )
-    return sunburst_fig, heatmap_fig
+    return [opts_year, opts_quarter, opts_month, opts_dept, opts_profile, opts_mes]
 
 
-# 🚀 1.2. ОБНОВЛЕННЫЙ CALLBACK С ВЫВОДОМ ЧИПОВ ФИЛЬТРОВ
+# 🚀 1. ВКЛАДКА 1 С ЧИПАМИ ФИЛЬТРОВ И DISTINCT СУММАМИ
 @app.callback(
     [
         Output("main-line-chart", "figure"),
@@ -2574,6 +2718,74 @@ def update_tab_1_router(
         add_chip("YoY", "Включено")
     return fig, title, kpi_sum, kpi_pat, kpi_mes, kpi_depts, insights, chips
 
+
+# 🚀 2. ВКЛАДКА 2 (TREEMAP И ХИТМАП С DISTINCT СУММАМИ)
+@app.callback(
+    [Output("sunburst-chart", "figure"), Output("heatmap-chart", "figure")],
+    [
+        Input("btn-apply-filters", "n_clicks"),
+        Input("btn-reset-all-filters", "n_clicks"),
+        Input("main-tabs", "active_tab"),
+        Input("theme-store", "data"),
+        Input("treemap-mode", "value"),
+    ],
+    [
+        State("f-year", "value"),
+        State("f-quarter", "value"),
+        State("f-month", "value"),
+        State("f-dept", "value"),
+        State("f-profile", "value"),
+        State("f-mes", "value"),
+        State("f-patient", "value"),
+        State("f-metric", "value"),
+    ],
+)
+def update_tab_2_router(
+    n_clicks_apply,
+    n_clicks_reset,
+    active_tab,
+    theme,
+    tree_mode,
+    years,
+    quarters,
+    months,
+    depts,
+    profiles,
+    mes_list,
+    patient,
+    metric,
+):
+    if active_tab != "tab-beta":
+        return dash.no_update, dash.no_update
+
+    ctx = dash.callback_context
+    trig = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
+    if trig == "btn-reset-all-filters":
+        years, quarters, months, depts, profiles, mes_list, patient = (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "",
+        )
+
+    return build_tab_2_data(
+        to_tuple(years),
+        to_tuple(quarters),
+        to_tuple(months),
+        to_tuple(depts),
+        to_tuple(profiles),
+        to_tuple(mes_list),
+        patient,
+        metric,
+        theme,
+        to_tuple(tree_mode),
+    )
+
+
+# 🚀 3. ТАБЛИЦА (С DISTINCT)
 @app.callback(
     [Output("ag-grid-container", "children"), Output("crossfilter-msg", "children")],
     [
@@ -2581,89 +2793,9 @@ def update_tab_1_router(
         Input("btn-reset-all-filters", "n_clicks"),
         Input("heatmap-chart", "clickData"),
         Input("main-tabs", "active_tab"),
-        Input("theme-store", "data")
+        Input("theme-store", "data"),
     ],
     [
-        State("f-year", "value"), State("f-quarter", "value"), State("f-month", "value"), State("f-dept", "value"),
-        State("f-profile", "value"), State("f-mes", "value"), State("f-patient", "value")
-    ]
-)
-def update_table_only(n_clicks_apply, n_clicks_reset, heatmap_click, active_tab, theme, years, quarters, months, depts, profiles, mes_list, patient):
-
-    if active_tab != "tab-beta":
-        return dash.no_update, dash.no_update
-        
-    ctx = dash.callback_context
-    trig = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
-    
-    if trig == "btn-reset-all-filters":
-        years, quarters, months, depts, profiles, mes_list, patient, heatmap_click = None, None, None, None, None, None, "", None
-        
-    df = get_optimized_data()
-    cf_msg = ""
-    where_clause = build_where_clause(years, quarters, months, depts, profiles, mes_list, patient)
-
-    if heatmap_click:
-        point = heatmap_click['points'][0]
-        clicked_month, clicked_dept = str(point['x'])[:7], str(point['y'])
-        safe_dept = clicked_dept.replace("'", "''")
-        where_clause += f" AND Month_Str = '{clicked_month}' AND \"Наименование отделения\" = '{safe_dept}'"
-        cf_msg = f"🔍 Отфильтровано по: {clicked_dept} ({clicked_month})"
-
-    conn = get_duck_conn(df)
-    has_data = conn.execute(f"SELECT COUNT(*) FROM df WHERE {where_clause}").fetchone()[0] > 0
-    if not has_data: 
-        return html.Div("Нет данных для отображения", style={"padding": "20px", "fontWeight": "bold"}), cf_msg
-
-    agg_cols = ['Наименование отделения', 'Наименование профиля', 'Код Услуги', 'Номер ИБ']
-    agg_cols = [c for c in agg_cols if c in df.columns]
-    
-    cols_str = ', '.join([f'"{c}"' for c in agg_cols])
-    
-    # Твоя логика с DISTINCT внутри подзапроса
-    if 'Сумма' in df.columns:
-        query = f'SELECT {cols_str}, COUNT(*) as Кол_во_услуг, ROUND(SUM(Сумма), 2) as Сумма FROM (SELECT DISTINCT "Номер ИБ", "Код Услуги", "Сумма", {cols_str} FROM df WHERE {where_clause}) GROUP BY {cols_str} ORDER BY Сумма DESC LIMIT 1000'
-    else:
-        query = f'SELECT {cols_str}, COUNT(*) as Кол_во_услуг FROM df WHERE {where_clause} GROUP BY {cols_str} ORDER BY Кол_во_услуг DESC LIMIT 1000'
-        
-    grid_df = conn.execute(query).df()
-
-    if grid_df.empty:
-        return html.Div("Нет данных для отображения", style={"padding": "20px", "fontWeight": "bold"}), cf_msg
-
-    column_defs = []
-    for col in grid_df.columns:
-        col_def = {"field": col, "sortable": True, "enableRowGroup": True, "enablePivot": True}
-        if col in ['Кол_во_услуг', 'Сумма']:
-            col_def.update({"filter": "agNumberColumnFilter", "enableValue": True})
-            if col == 'Сумма': col_def["aggFunc"] = "sum"
-        else:
-            col_def["filter"] = "agSetColumnFilter"
-        column_defs.append(col_def)
-
-    ag_grid = dag.AgGrid(
-        id="interactive-grid",
-        rowData=grid_df.to_dict("records"), columnDefs=column_defs, 
-        defaultColDef={"flex": 1, "minWidth": 150, "floatingFilter": True}, 
-        className="ag-theme-alpine" if theme == "light" else "ag-theme-alpine-dark", 
-        enableEnterpriseModules=True, 
-        dashGridOptions={"localeText": AG_GRID_LOCALE_RU, "pagination": True, "paginationPageSize": 15, "rowGroupPanelShow": "always", "sideBar": True}, 
-        style={"height": "650px", "width": "100%", "borderRadius": "12px"}
-    )
-
-    return ag_grid, cf_msg
-
-@app.callback(
-    [
-        Output("drilldown-modal", "is_open"),
-        Output("modal-title", "children"),
-        Output("modal-body", "children"),
-    ],
-    [Input("filtered-click-data", "data"), Input("close-modal", "n_clicks")],
-    [
-        State("drilldown-modal", "is_open"),
-        State("f-group-by", "value"),
-        State("f-metric", "value"),
         State("f-year", "value"),
         State("f-quarter", "value"),
         State("f-month", "value"),
@@ -2673,12 +2805,12 @@ def update_table_only(n_clicks_apply, n_clicks_reset, heatmap_click, active_tab,
         State("f-patient", "value"),
     ],
 )
-def drilldown_modal(
-    clickData,
-    close_clicks,
-    is_open,
-    group_by_col,
-    metric,
+def update_table_only(
+    n_clicks_apply,
+    n_clicks_reset,
+    heatmap_click,
+    active_tab,
+    theme,
     years,
     quarters,
     months,
@@ -2687,198 +2819,108 @@ def drilldown_modal(
     mes_list,
     patient,
 ):
+    if active_tab != "tab-beta":
+        return dash.no_update, dash.no_update
     ctx = dash.callback_context
-    if not ctx.triggered:
-        return is_open, dash.no_update, dash.no_update
-    trigger_id = ctx.triggered[0]["prop_id"].split(".")[0]
-    if trigger_id == "close-modal":
-        return False, "", ""
-
-    if clickData and trigger_id == "filtered-click-data":
-        point = clickData["points"][0]
-        custom_info = str(point.get("customdata", ""))
-        if custom_info.startswith("SQL"):
-            return (
-                True,
-                "Информация",
-                html.Div("Детализация доступна только в стандартном режиме."),
-            )
-
-        clicked_date = point["x"]
-        clicked_group = custom_info.split("|")[1] if "|" in custom_info else custom_info
-        df = get_optimized_data()
-        mask = pd.Series(True, index=df.index)
-        if years:
-            mask &= df["Year"].isin(years)
-        if quarters:
-            mask &= df["Quarter_Name"].isin(quarters)
-        if months:
-            mask &= df["Month_Name"].isin(months)
-        if depts:
-            mask &= df["Наименование отделения"].isin(depts)
-        if profiles:
-            mask &= df["Наименование профиля"].isin(profiles)
-        if mes_list:
-            mask &= df["Код Услуги"].isin(mes_list)
-        if patient:
-            mask &= df["Номер ИБ"].astype(str).str.contains(str(patient), case=False)
-
-        mask &= df["dt"].dt.strftime("%Y-%m-%d") == clicked_date.split(" ")[0]
-        mask &= df[group_by_col].astype(str).str.strip() == str(clicked_group).strip()
-        df_filtered = df[mask]
-        drill_col, drill_label = (
-            ("Код Услуги", "МЭС")
-            if group_by_col == "Наименование отделения"
-            else ("Наименование отделения", "отделение")
+    trig = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
+    if trig == "btn-reset-all-filters":
+        years, quarters, months, depts, profiles, mes_list, patient, heatmap_click = (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "",
+            None,
         )
 
-        if metric == "sum":
-            df_unique = df_filtered.drop_duplicates(
-                subset=["Номер ИБ", "Код Услуги", drill_col, "Сумма"]
-            )
-            total_val = df_unique["Сумма"].sum()
-            fmt_val = f"{total_val:,.2f} ₽".replace(",", " ").replace(".", ",")
-            breakdown = (
-                df_unique.groupby(drill_col, observed=True)["Сумма"].sum().reset_index()
-            )
-            val_col, suffix = "Сумма", " ₽"
-        elif metric == "count_patients":
-            total_val = df_filtered["ИД пациента в версии счета"].nunique()
-            fmt_val = f"{total_val} чел."
-            breakdown = (
-                df_filtered.groupby(drill_col, observed=True)[
-                    "ИД пациента в версии счета"
-                ]
-                .nunique()
-                .reset_index(name="val")
-            )
-            val_col, suffix = "val", " чел."
-        else:
-            total_val = len(df_filtered)
-            fmt_val = f"{total_val} ед."
-            breakdown = (
-                df_filtered.groupby(drill_col, observed=True)
-                .size()
-                .reset_index(name="val")
-            )
-            val_col, suffix = "val", " ед."
+    df = get_optimized_data()
+    cf_msg = ""
+    where_clause = build_where_clause(
+        years, quarters, months, depts, profiles, mes_list, patient
+    )
 
-        top_n = breakdown.sort_values(val_col, ascending=False).head(10)
-        median_val = breakdown[val_col].median() if not breakdown.empty else 0
-        top3_names = set(
-            top_n.sort_values(val_col, ascending=False).head(3)[drill_col].tolist()
-        )
+    if heatmap_click:
+        point = heatmap_click["points"][0]
+        clicked_month, clicked_dept = str(point["x"])[:7], str(point["y"])
+        safe_dept = clicked_dept.replace("'", "''")
+        where_clause += f" AND Month_Str = '{clicked_month}' AND \"Наименование отделения\" = '{safe_dept}'"
+        cf_msg = f"🔍 Отфильтровано по: {clicked_dept} ({clicked_month})"
 
-        leader_name = top_n.iloc[0][drill_col] if not top_n.empty else "Н/Д"
-        leader_val = top_n.iloc[0][val_col] if not top_n.empty else 0
-        fmt_leader_val = (
-            f"{leader_val:,.2f}".replace(",", " ").replace(".", ",")
-            if metric == "sum"
-            else f"{leader_val}"
-        )
-
-        summary_text = html.Div(
-            [
-                html.Span("В выбранный период по объекту "),
-                html.B(f"«{clicked_group}»", style={"color": "var(--primary)"}),
-                html.Span(" зафиксировано "),
-                html.B(fmt_val),
-                html.Span(
-                    f". Из них основной объем (Топ-1) приходится на {drill_label} "
-                ),
-                html.B(f"«{leader_name}»"),
-                html.Span(f", что составляет "),
-                html.B(f"{fmt_leader_val}{suffix}"),
-                html.Span("."),
-            ],
-            style={
-                "backgroundColor": "var(--bg-color)",
-                "padding": "15px 20px",
-                "borderRadius": "12px",
-                "fontSize": "15px",
-                "lineHeight": "1.6",
-                "color": "var(--text-main)",
-                "marginBottom": "25px",
-                "borderLeft": "5px solid var(--primary)",
-            },
-        )
-        top_n_plot = top_n.sort_values(val_col, ascending=True)
-        short_labels = top_n_plot[drill_col].apply(
-            lambda x: str(x) if len(str(x)) <= 40 else str(x)[:37] + "..."
-        )
-        text_template = "%{x:,.2f} ₽" if metric == "sum" else "%{x:,.0f}"
-        ht_template = (
-            "<b>%{customdata}</b><br>Значение: %{x:,.2f} ₽<extra></extra>"
-            if metric == "sum"
-            else "<b>%{customdata}</b><br>Значение: %{x:,.0f}<extra></extra>"
-        )
-
-        colors_bar = [
-            "#FF7D00" if name in top3_names else "var(--primary)"
-            for name in top_n_plot[drill_col]
-        ]
-        fig_modal = go.Figure(
-            go.Bar(
-                x=top_n_plot[val_col],
-                y=short_labels,
-                customdata=top_n_plot[drill_col],
-                orientation="h",
-                marker_color=colors_bar,
-                texttemplate=text_template,
-                textposition="outside",
-                cliponaxis=False,
-                hovertemplate=ht_template,
-            )
-        )
-        max_x_val = top_n_plot[val_col].max() if not top_n_plot.empty else 0
-        if median_val > 0:
-            fig_modal.add_vline(
-                x=median_val,
-                line_width=2,
-                line_dash="dash",
-                line_color="var(--grid-color)",
-                annotation_text="Медиана",
-                annotation_position="top right",
-                annotation_font_color="var(--text-muted)",
-            )
-
-        fig_modal.update_layout(
-            margin=dict(r=20, t=10, b=10),
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            xaxis=dict(
-                showgrid=True,
-                gridcolor="var(--grid-color)",
-                range=[0, (max_x_val * 1.15) if max_x_val > 0 else 10],
-            ),
-            yaxis=dict(type="category", automargin=True),
-        )
+    conn = get_duck_conn(df)
+    has_data = (
+        conn.execute(f"SELECT COUNT(*) FROM df WHERE {where_clause}").fetchone()[0] > 0
+    )
+    if not has_data:
         return (
-            True,
-            f"Детальный анализ: {clicked_group}",
             html.Div(
-                [
-                    summary_text,
-                    html.P(
-                        f"Распределение по разрезу «{drill_label}»:",
-                        style={
-                            "fontWeight": "700",
-                            "fontSize": "14px",
-                            "marginBottom": "10px",
-                        },
-                    ),
-                    dcc.Graph(
-                        figure=fig_modal,
-                        config={"displayModeBar": False},
-                        style={"height": "380px"},
-                    ),
-                ]
+                "Нет данных для отображения",
+                style={"padding": "20px", "fontWeight": "bold"},
             ),
+            cf_msg,
         )
-    return is_open, dash.no_update, dash.no_update
+
+    agg_cols = [
+        "Наименование отделения",
+        "Наименование профиля",
+        "Код Услуги",
+        "Номер ИБ",
+    ]
+    agg_cols = [c for c in agg_cols if c in df.columns]
+    cols_str = ", ".join([f'"{c}"' for c in agg_cols])
+
+    if "Сумма" in df.columns:
+        query = f'SELECT {cols_str}, COUNT(*) as Кол_во_услуг, ROUND(SUM(Сумма), 2) as Сумма FROM (SELECT DISTINCT "Номер ИБ", "Код Услуги", "Сумма", {cols_str} FROM df WHERE {where_clause}) GROUP BY {cols_str} ORDER BY Сумма DESC LIMIT 1000'
+    else:
+        query = f"SELECT {cols_str}, COUNT(*) as Кол_во_услуг FROM df WHERE {where_clause} GROUP BY {cols_str} ORDER BY Кол_во_услуг DESC LIMIT 1000"
+
+    grid_df = conn.execute(query).df()
+    if grid_df.empty:
+        return (
+            html.Div(
+                "Нет данных для отображения",
+                style={"padding": "20px", "fontWeight": "bold"},
+            ),
+            cf_msg,
+        )
+
+    column_defs = []
+    for col in grid_df.columns:
+        col_def = {
+            "field": col,
+            "sortable": True,
+            "enableRowGroup": True,
+            "enablePivot": True,
+        }
+        if col in ["Кол_во_услуг", "Сумма"]:
+            col_def.update({"filter": "agNumberColumnFilter", "enableValue": True})
+            if col == "Сумма":
+                col_def["aggFunc"] = "sum"
+        else:
+            col_def["filter"] = "agSetColumnFilter"
+        column_defs.append(col_def)
+
+    ag_grid = dag.AgGrid(
+        id="interactive-grid",
+        rowData=grid_df.to_dict("records"),
+        columnDefs=column_defs,
+        defaultColDef={"flex": 1, "minWidth": 150, "floatingFilter": True},
+        className="ag-theme-alpine" if theme == "light" else "ag-theme-alpine-dark",
+        enableEnterpriseModules=True,
+        dashGridOptions={
+            "localeText": AG_GRID_LOCALE_RU,
+            "pagination": True,
+            "paginationPageSize": 15,
+            "rowGroupPanelShow": "always",
+            "sideBar": True,
+        },
+        style={"height": "650px", "width": "100%", "borderRadius": "12px"},
+    )
+    return ag_grid, cf_msg
 
 
-# 🚀 3. ABC-АНАЛИЗ: ТЕКСТОВОЕ КЛЮЧЕВОЕ СООБЩЕНИЕ НАД ТАБЛИЦЕЙ
+# 🚀 4. ABC-АНАЛИЗ С ИНСАЙТАМИ (С DISTINCT)
 @app.callback(
     [Output("abc-grid-container", "children"), Output("download-abc-xlsx", "data")],
     [
@@ -3087,7 +3129,764 @@ def update_abc_analysis(
     return html.Div([abc_summary, ag_grid]), dash.no_update
 
 
-# 🚀 4. МЕДИЦИНСКАЯ КАРТОЧКА ПАЦИЕНТА: ГРУППИРОВКА ПО МЕСЯЦАМ
+# 🚀 5. DRILLDOWN: СТАТИСТИКА МЕДИАНЫ И ТОП-3 ПОДСВЕТКА
+@app.callback(
+    [
+        Output("drilldown-modal", "is_open"),
+        Output("modal-title", "children"),
+        Output("modal-body", "children"),
+    ],
+    [Input("filtered-click-data", "data"), Input("close-modal", "n_clicks")],
+    [
+        State("drilldown-modal", "is_open"),
+        State("f-group-by", "value"),
+        State("f-metric", "value"),
+        State("f-year", "value"),
+        State("f-quarter", "value"),
+        State("f-month", "value"),
+        State("f-dept", "value"),
+        State("f-profile", "value"),
+        State("f-mes", "value"),
+        State("f-patient", "value"),
+    ],
+)
+def drilldown_modal(
+    clickData,
+    close_clicks,
+    is_open,
+    group_by_col,
+    metric,
+    years,
+    quarters,
+    months,
+    depts,
+    profiles,
+    mes_list,
+    patient,
+):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return is_open, dash.no_update, dash.no_update
+    trigger_id = ctx.triggered[0]["prop_id"].split(".")[0]
+    if trigger_id == "close-modal":
+        return False, "", ""
+
+    if clickData and trigger_id == "filtered-click-data":
+        point = clickData["points"][0]
+        custom_info = str(point.get("customdata", ""))
+        if custom_info.startswith("SQL"):
+            return (
+                True,
+                "Информация",
+                html.Div("Детализация доступна только в стандартном режиме."),
+            )
+
+        clicked_date = point["x"]
+        clicked_group = custom_info.split("|")[1] if "|" in custom_info else custom_info
+        df = get_optimized_data()
+        mask = pd.Series(True, index=df.index)
+        if years:
+            mask &= df["Year"].isin(years)
+        if quarters:
+            mask &= df["Quarter_Name"].isin(quarters)
+        if months:
+            mask &= df["Month_Name"].isin(months)
+        if depts:
+            mask &= df["Наименование отделения"].isin(depts)
+        if profiles:
+            mask &= df["Наименование профиля"].isin(profiles)
+        if mes_list:
+            mask &= df["Код Услуги"].isin(mes_list)
+        if patient:
+            mask &= df["Номер ИБ"].astype(str).str.contains(str(patient), case=False)
+
+        mask &= df["dt"].dt.strftime("%Y-%m-%d") == clicked_date.split(" ")[0]
+        mask &= df[group_by_col].astype(str).str.strip() == str(clicked_group).strip()
+        df_filtered = df[mask]
+        drill_col, drill_label = (
+            ("Код Услуги", "МЭС")
+            if group_by_col == "Наименование отделения"
+            else ("Наименование отделения", "отделение")
+        )
+
+        if metric == "sum":
+            df_unique = df_filtered.drop_duplicates(
+                subset=["Номер ИБ", "Код Услуги", drill_col, "Сумма"]
+            )
+            total_val = df_unique["Сумма"].sum()
+            fmt_val = f"{total_val:,.2f} ₽".replace(",", " ").replace(".", ",")
+            breakdown = (
+                df_unique.groupby(drill_col, observed=True)["Сумма"].sum().reset_index()
+            )
+            val_col, suffix = "Сумма", " ₽"
+        elif metric == "count_patients":
+            total_val = df_filtered["ИД пациента в версии счета"].nunique()
+            fmt_val = f"{total_val} чел."
+            breakdown = (
+                df_filtered.groupby(drill_col, observed=True)[
+                    "ИД пациента в версии счета"
+                ]
+                .nunique()
+                .reset_index(name="val")
+            )
+            val_col, suffix = "val", " чел."
+        else:
+            total_val = len(df_filtered)
+            fmt_val = f"{total_val} ед."
+            breakdown = (
+                df_filtered.groupby(drill_col, observed=True)
+                .size()
+                .reset_index(name="val")
+            )
+            val_col, suffix = "val", " ед."
+
+        top_n = breakdown.sort_values(val_col, ascending=False).head(10)
+        median_val = breakdown[val_col].median() if not breakdown.empty else 0
+        top3_names = set(
+            top_n.sort_values(val_col, ascending=False).head(3)[drill_col].tolist()
+        )
+
+        leader_name = top_n.iloc[0][drill_col] if not top_n.empty else "Н/Д"
+        leader_val = top_n.iloc[0][val_col] if not top_n.empty else 0
+        fmt_leader_val = (
+            f"{leader_val:,.2f}".replace(",", " ").replace(".", ",")
+            if metric == "sum"
+            else f"{leader_val}"
+        )
+
+        summary_text = html.Div(
+            [
+                html.Span("В выбранный период по объекту "),
+                html.B(f"«{clicked_group}»", style={"color": "var(--primary)"}),
+                html.Span(" зафиксировано "),
+                html.B(fmt_val),
+                html.Span(
+                    f". Из них основной объем (Топ-1) приходится на {drill_label} "
+                ),
+                html.B(f"«{leader_name}»"),
+                html.Span(f", что составляет "),
+                html.B(f"{fmt_leader_val}{suffix}"),
+                html.Span("."),
+            ],
+            style={
+                "backgroundColor": "var(--bg-color)",
+                "padding": "15px 20px",
+                "borderRadius": "12px",
+                "fontSize": "15px",
+                "lineHeight": "1.6",
+                "color": "var(--text-main)",
+                "marginBottom": "25px",
+                "borderLeft": "5px solid var(--primary)",
+            },
+        )
+        top_n_plot = top_n.sort_values(val_col, ascending=True)
+        short_labels = top_n_plot[drill_col].apply(
+            lambda x: str(x) if len(str(x)) <= 40 else str(x)[:37] + "..."
+        )
+        text_template = "%{x:,.2f} ₽" if metric == "sum" else "%{x:,.0f}"
+        ht_template = (
+            "<b>%{customdata}</b><br>Значение: %{x:,.2f} ₽<extra></extra>"
+            if metric == "sum"
+            else "<b>%{customdata}</b><br>Значение: %{x:,.0f}<extra></extra>"
+        )
+
+        colors_bar = [
+            "#FF7D00" if name in top3_names else "#7280FA"
+            for name in top_n_plot[drill_col]
+        ]
+        fig_modal = go.Figure(
+            go.Bar(
+                x=top_n_plot[val_col],
+                y=short_labels,
+                customdata=top_n_plot[drill_col],
+                orientation="h",
+                marker_color=colors_bar,
+                texttemplate=text_template,
+                textposition="outside",
+                cliponaxis=False,
+                hovertemplate=ht_template,
+            )
+        )
+        max_x_val = top_n_plot[val_col].max() if not top_n_plot.empty else 0
+        if median_val > 0:
+            fig_modal.add_vline(
+                x=median_val,
+                line_width=2,
+                line_dash="dash",
+                line_color="var(--grid-color)",
+                annotation_text="Медиана",
+                annotation_position="top right",
+                annotation_font_color="var(--text-muted)",
+            )
+
+        fig_modal.update_layout(
+            margin=dict(r=20, t=10, b=10),
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            xaxis=dict(
+                showgrid=True,
+                gridcolor="var(--grid-color)",
+                range=[0, (max_x_val * 1.15) if max_x_val > 0 else 10],
+            ),
+            yaxis=dict(type="category", automargin=True),
+        )
+        return (
+            True,
+            f"Детальный анализ: {clicked_group}",
+            html.Div(
+                [
+                    summary_text,
+                    html.P(
+                        f"Распределение по разрезу «{drill_label}»:",
+                        style={
+                            "fontWeight": "700",
+                            "fontSize": "14px",
+                            "marginBottom": "10px",
+                        },
+                    ),
+                    dcc.Graph(
+                        figure=fig_modal,
+                        config={"displayModeBar": False},
+                        style={"height": "380px"},
+                    ),
+                ]
+            ),
+        )
+    return is_open, dash.no_update, dash.no_update
+
+
+# 🚀 6. МОДАЛЬНОЕ ОКНО YOY С DISTINCT
+@app.callback(
+    [
+        Output("yoy-modal", "is_open"),
+        Output("yoy-modal-title", "children"),
+        Output("yoy-modal-body", "children"),
+        Output("f-yoy", "value", allow_duplicate=True),
+    ],
+    [Input("f-yoy", "value"), Input("close-yoy-modal", "n_clicks")],
+    [
+        State("yoy-modal", "is_open"),
+        State("f-year", "value"),
+        State("f-quarter", "value"),
+        State("f-month", "value"),
+        State("f-dept", "value"),
+        State("f-profile", "value"),
+        State("f-mes", "value"),
+        State("f-patient", "value"),
+    ],
+    prevent_initial_call=True,
+)
+def toggle_yoy_comparison(
+    yoy_val,
+    close_clicks,
+    is_open,
+    years,
+    quarters,
+    months,
+    depts,
+    profiles,
+    mes_list,
+    patient,
+):
+    ctx = dash.callback_context
+    trig = ctx.triggered[0]["prop_id"].split(".")[0]
+
+    if trig == "close-yoy-modal":
+        return False, dash.no_update, dash.no_update, []
+    if trig == "f-yoy" and yoy_val and True in yoy_val:
+        df = get_optimized_data()
+        if df.empty:
+            return (
+                True,
+                "Сравнение с прошлым годом",
+                html.Div("Нет данных в базе"),
+                dash.no_update,
+            )
+
+        max_year_overall = int(df["Year"].max())
+        target_year = max(years) if years else max_year_overall
+        cy, py = target_year, target_year - 1
+        where_base = build_where_clause(
+            None, quarters, months, depts, profiles, mes_list, patient
+        )
+
+        conn = get_duck_conn(df)
+
+        query_totals = f"""
+            SELECT "Year", SUM(Сумма) as total_sum, COUNT(DISTINCT "Номер ИБ") as total_patients, COUNT(*) as total_mes
+            FROM (SELECT DISTINCT "Номер ИБ", "Код Услуги", "Year", Сумма FROM df WHERE {where_base} AND "Year" IN ({cy}, {py}))
+            GROUP BY "Year"
+        """
+        res_totals = conn.execute(query_totals).df()
+
+        query_depts = f"""
+            WITH dept_stats AS (
+                SELECT "Наименование отделения" as dept, SUM(CASE WHEN "Year" = {cy} THEN Сумма ELSE 0 END) as sum_cy, SUM(CASE WHEN "Year" = {py} THEN Сумма ELSE 0 END) as sum_py
+                FROM (SELECT DISTINCT "Номер ИБ", "Код Услуги", "Наименование отделения", "Year", Сумма FROM df WHERE {where_base} AND "Year" IN ({cy}, {py}))
+                GROUP BY "Наименование отделения"
+            )
+            SELECT dept, sum_cy, sum_py FROM dept_stats ORDER BY sum_cy DESC LIMIT 3
+        """
+        res_depts = conn.execute(query_depts).df()
+
+        query_services = f"""
+            WITH mes_stats AS (
+                SELECT "Код Услуги" as mes, SUM(CASE WHEN "Year" = {cy} THEN Сумма ELSE 0 END) as sum_cy, SUM(CASE WHEN "Year" = {py} THEN Сумма ELSE 0 END) as sum_py
+                FROM (SELECT DISTINCT "Номер ИБ", "Код Услуги", "Year", Сумма FROM df WHERE {where_base} AND "Year" IN ({cy}, {py}))
+                GROUP BY "Код Услуги"
+            )
+            SELECT mes, sum_cy, sum_py, (sum_cy - sum_py) as growth FROM mes_stats ORDER BY growth DESC LIMIT 3
+        """
+        res_services = conn.execute(query_services).df()
+
+        stats = {cy: {"sum": 0, "pat": 0, "mes": 0}, py: {"sum": 0, "pat": 0, "mes": 0}}
+        for _, row in res_totals.iterrows():
+            y = int(row["Year"])
+            if y in stats:
+                stats[y] = {
+                    "sum": row["total_sum"],
+                    "pat": row["total_patients"],
+                    "mes": row["total_mes"],
+                }
+
+        avg_check_cy = (
+            stats[cy]["sum"] / stats[cy]["pat"] if stats[cy]["pat"] > 0 else 0
+        )
+        avg_check_py = (
+            stats[py]["sum"] / stats[py]["pat"] if stats[py]["pat"] > 0 else 0
+        )
+
+        def make_yoy_row(title, val_cy, val_py, is_currency=False):
+            fmt = lambda x: (
+                f"{x:,.2f} ₽".replace(",", " ").replace(".", ",")
+                if is_currency
+                else f"{int(x):,.0f} шт.".replace(",", " ")
+            )
+            diff = val_cy - val_py
+            pct = (diff / val_py * 100) if val_py > 0 else 0
+            color, bg_color, icon, sign = (
+                ("#01B574", "rgba(1,181,116,0.1)", "fa-arrow-up", "+")
+                if diff >= 0
+                else ("#E11D48", "rgba(225,29,72,0.1)", "fa-arrow-down", "")
+            )
+
+            return html.Div(
+                [
+                    html.Div(
+                        [
+                            html.I(
+                                className="fas fa-chart-line",
+                                style={
+                                    "marginRight": "10px",
+                                    "color": "var(--primary)",
+                                },
+                            ),
+                            title,
+                        ],
+                        style={
+                            "fontWeight": "800",
+                            "fontSize": "15px",
+                            "color": "var(--text-main)",
+                            "marginBottom": "15px",
+                        },
+                    ),
+                    html.Div(
+                        [
+                            html.Div(
+                                [
+                                    html.Span(
+                                        f"{py} год",
+                                        style={
+                                            "color": "var(--text-muted)",
+                                            "fontSize": "12px",
+                                            "display": "block",
+                                            "fontWeight": "600",
+                                        },
+                                    ),
+                                    html.B(
+                                        fmt(val_py),
+                                        style={
+                                            "fontSize": "20px",
+                                            "color": "var(--text-main)",
+                                        },
+                                    ),
+                                ],
+                                style={"flex": 1},
+                            ),
+                            html.Div(
+                                [
+                                    html.Span(
+                                        f"{cy} год",
+                                        style={
+                                            "color": "var(--text-muted)",
+                                            "fontSize": "12px",
+                                            "display": "block",
+                                            "fontWeight": "600",
+                                        },
+                                    ),
+                                    html.B(
+                                        fmt(val_cy),
+                                        style={
+                                            "fontSize": "20px",
+                                            "color": "var(--primary)",
+                                        },
+                                    ),
+                                ],
+                                style={"flex": 1},
+                            ),
+                            html.Div(
+                                [
+                                    html.Span(
+                                        [
+                                            html.I(
+                                                className=f"fas {icon}",
+                                                style={"marginRight": "6px"},
+                                            ),
+                                            f"{sign}{fmt(diff)}",
+                                        ],
+                                        style={
+                                            "display": "block",
+                                            "fontWeight": "bold",
+                                            "fontSize": "14px",
+                                        },
+                                    ),
+                                    html.Span(
+                                        f"({sign}{pct:.1f}%)",
+                                        style={"fontSize": "12px", "fontWeight": "600"},
+                                    ),
+                                ],
+                                style={
+                                    "flex": 1,
+                                    "textAlign": "right",
+                                    "color": color,
+                                    "backgroundColor": bg_color,
+                                    "padding": "10px 15px",
+                                    "borderRadius": "12px",
+                                },
+                            ),
+                        ],
+                        style={
+                            "display": "flex",
+                            "alignItems": "center",
+                            "justifyContent": "space-between",
+                        },
+                    ),
+                ],
+                style={
+                    "backgroundColor": "var(--card-bg)",
+                    "padding": "25px",
+                    "borderRadius": "16px",
+                    "marginBottom": "15px",
+                    "border": "2px solid var(--grid-color)",
+                    "boxShadow": "var(--shadow)",
+                },
+            )
+
+        def make_compact_yoy_row(title, val_cy, val_py, is_currency=True):
+            fmt = lambda x: (
+                f"{x:,.2f} ₽".replace(",", " ").replace(".", ",")
+                if is_currency
+                else f"{int(x):,.0f} шт.".replace(",", " ")
+            )
+            diff = val_cy - val_py
+            pct = (diff / val_py * 100) if val_py > 0 else 0
+            color, bg_color, icon, sign = (
+                ("#01B574", "rgba(1,181,116,0.1)", "fa-arrow-up", "+")
+                if diff >= 0
+                else ("#E11D48", "rgba(225,29,72,0.1)", "fa-arrow-down", "")
+            )
+
+            return html.Div(
+                [
+                    html.Div(
+                        title,
+                        style={
+                            "fontWeight": "700",
+                            "fontSize": "13px",
+                            "color": "var(--text-main)",
+                            "marginBottom": "8px",
+                            "whiteSpace": "nowrap",
+                            "overflow": "hidden",
+                            "textOverflow": "ellipsis",
+                        },
+                    ),
+                    html.Div(
+                        [
+                            html.Div(
+                                [
+                                    html.Span(
+                                        f"{py} год",
+                                        style={
+                                            "color": "var(--text-muted)",
+                                            "fontSize": "11px",
+                                            "display": "block",
+                                        },
+                                    ),
+                                    html.B(
+                                        fmt(val_py),
+                                        style={
+                                            "fontSize": "14px",
+                                            "color": "var(--text-main)",
+                                        },
+                                    ),
+                                ],
+                                style={"flex": 1},
+                            ),
+                            html.Div(
+                                [
+                                    html.Span(
+                                        f"{cy} год",
+                                        style={
+                                            "color": "var(--text-muted)",
+                                            "fontSize": "11px",
+                                            "display": "block",
+                                        },
+                                    ),
+                                    html.B(
+                                        fmt(val_cy),
+                                        style={
+                                            "fontSize": "14px",
+                                            "color": "var(--primary)",
+                                        },
+                                    ),
+                                ],
+                                style={"flex": 1},
+                            ),
+                            html.Div(
+                                [
+                                    html.Span(
+                                        [
+                                            html.I(
+                                                className=f"fas {icon}",
+                                                style={"marginRight": "4px"},
+                                            ),
+                                            f"{sign}{fmt(diff)}",
+                                        ],
+                                        style={
+                                            "display": "block",
+                                            "fontWeight": "bold",
+                                            "fontSize": "12px",
+                                        },
+                                    ),
+                                    html.Span(
+                                        f"({sign}{pct:.1f}%)",
+                                        style={"fontSize": "11px", "fontWeight": "600"},
+                                    ),
+                                ],
+                                style={
+                                    "flex": 1,
+                                    "textAlign": "right",
+                                    "color": color,
+                                    "backgroundColor": bg_color,
+                                    "padding": "6px 10px",
+                                    "borderRadius": "8px",
+                                },
+                            ),
+                        ],
+                        style={
+                            "display": "flex",
+                            "alignItems": "center",
+                            "justifyContent": "space-between",
+                        },
+                    ),
+                ],
+                style={
+                    "backgroundColor": "var(--card-bg)",
+                    "padding": "15px",
+                    "borderRadius": "12px",
+                    "marginBottom": "10px",
+                    "border": "1px solid var(--grid-color)",
+                },
+            )
+
+        dept_components = [
+            html.H5(
+                "🏥 Топ-3 отделения (по выручке)",
+                style={
+                    "fontWeight": "800",
+                    "color": "var(--text-main)",
+                    "marginTop": "25px",
+                    "marginBottom": "15px",
+                    "fontSize": "16px",
+                },
+            )
+        ]
+        if res_depts.empty:
+            dept_components.append(
+                html.Div(
+                    "Нет данных",
+                    style={"color": "var(--text-muted)", "fontSize": "13px"},
+                )
+            )
+        else:
+            for _, row in res_depts.iterrows():
+                dept_components.append(
+                    make_compact_yoy_row(
+                        str(row["dept"]), row["sum_cy"], row["sum_py"], is_currency=True
+                    )
+                )
+
+        service_components = [
+            html.H5(
+                "📈 Топ-3 быстрорастущие услуги (по приросту выручки)",
+                style={
+                    "fontWeight": "800",
+                    "color": "var(--text-main)",
+                    "marginTop": "25px",
+                    "marginBottom": "15px",
+                    "fontSize": "16px",
+                },
+            )
+        ]
+        if res_services.empty:
+            service_components.append(
+                html.Div(
+                    "Нет данных",
+                    style={"color": "var(--text-muted)", "fontSize": "13px"},
+                )
+            )
+        else:
+            for _, row in res_services.iterrows():
+                mes_code = (
+                    str(row["mes"])[:-2]
+                    if str(row["mes"]).endswith(".0")
+                    else str(row["mes"])
+                )
+                service_components.append(
+                    make_compact_yoy_row(
+                        f"МЭС: {mes_code}",
+                        row["sum_cy"],
+                        row["sum_py"],
+                        is_currency=True,
+                    )
+                )
+
+        modal_body = html.Div(
+            [
+                html.Div(
+                    f"Анализ проводится с учетом текущих фильтров. Год для сравнения выбран автоматически.",
+                    style={
+                        "color": "var(--text-muted)",
+                        "marginBottom": "20px",
+                        "fontSize": "13px",
+                    },
+                ),
+                make_yoy_row(
+                    "ВЫРУЧКА (ОБЩАЯ СУММА)",
+                    stats[cy]["sum"],
+                    stats[py]["sum"],
+                    is_currency=True,
+                ),
+                make_yoy_row(
+                    "СРЕДНИЙ ЧЕК ПАЦИЕНТА", avg_check_cy, avg_check_py, is_currency=True
+                ),
+                make_yoy_row(
+                    "УНИКАЛЬНЫХ ПАЦИЕНТОВ", stats[cy]["pat"], stats[py]["pat"]
+                ),
+                make_yoy_row(
+                    "ОКАЗАННЫХ УСЛУГ (МЭС)", stats[cy]["mes"], stats[py]["mes"]
+                ),
+                html.Div(dept_components),
+                html.Div(service_components),
+            ]
+        )
+        return True, f"Сравнение {cy} vs {py} (YoY)", modal_body, dash.no_update
+    return is_open, dash.no_update, dash.no_update, dash.no_update
+
+
+# 🚀 7. СБРОС ФИЛЬТРОВ И ВЫВОД ВЫДЕЛЕННЫХ ТОЧЕК
+@app.callback(
+    [
+        Output("f-year", "value"),
+        Output("f-quarter", "value"),
+        Output("f-month", "value"),
+        Output("f-dept", "value"),
+        Output("f-profile", "value"),
+        Output("f-mes", "value"),
+        Output("f-patient", "value"),
+        Output("f-yoy", "value"),
+    ],
+    [Input("btn-reset-all-filters", "n_clicks")],
+    prevent_initial_call=True,
+)
+def clear_all_filter_inputs(n_clicks):
+    if n_clicks:
+        return None, None, None, None, None, None, "", []
+    return dash.no_update
+
+
+@app.callback(
+    Output("selection-modal", "style"),
+    Output("selection-modal-content", "children"),
+    [Input("filtered-selected-data", "data"), Input("btn-close-modal", "n_clicks")],
+    [State("f-group-by", "value")],
+    prevent_initial_call=True,
+)
+def show_selected_points_data(selected_data, close_clicks, group_by_col):
+    ctx = dash.callback_context
+    trigger = ctx.triggered[0]["prop_id"] if ctx.triggered else ""
+    if (
+        "btn-close-modal" in trigger
+        or not selected_data
+        or "points" not in selected_data
+        or len(selected_data["points"]) == 0
+    ):
+        return {"display": "none"}, ""
+
+    df = get_optimized_data()
+    if df.empty:
+        return {"display": "none"}, ""
+
+    conditions = []
+    for p in selected_data["points"]:
+        dt_val = p.get("x")[:10]
+        c_data = str(p.get("customdata", ""))
+        if "|" in c_data:
+            group_val = c_data.split("|")[1]
+            safe_grp = str(group_val).replace("'", "''")
+            conditions.append(
+                f"(CAST(dt AS DATE) = '{dt_val}' AND \"{group_by_col}\" = '{safe_grp}')"
+            )
+
+    if not conditions:
+        return {"display": "none"}, ""
+    where_points = " OR ".join(conditions)
+
+    conn = get_duck_conn(df)
+    query = f'SELECT ROUND(SUM(Сумма), 2), COUNT(*) FROM (SELECT DISTINCT "Номер ИБ", "Код Услуги", "Сумма" FROM df WHERE {where_points})'
+    res = conn.execute(query).fetchone()
+
+    total_sum, total_count = res[0] or 0, res[1] or 0
+    content = html.Div(
+        [
+            html.Div(
+                [
+                    html.Span("Выделено точек: ", style={"color": "var(--text-muted)"}),
+                    html.B(f"{len(selected_data['points'])}"),
+                ]
+            ),
+            html.Div(
+                [
+                    html.Span(
+                        "Количество услуг: ", style={"color": "var(--text-muted)"}
+                    ),
+                    html.B(f"{total_count:,} ед.".replace(",", " ")),
+                ]
+            ),
+            html.Div(
+                [
+                    html.Span("Общая сумма: ", style={"color": "var(--text-muted)"}),
+                    html.B(
+                        f"{total_sum:,.2f} ₽".replace(",", " ").replace(".", ","),
+                        style={"color": "#01B574", "fontSize": "16px"},
+                    ),
+                ]
+            ),
+        ]
+    )
+    return {"display": "block"}, content
+
+
 @app.callback(
     [
         Output("patient-modal", "is_open"),
@@ -3095,10 +3894,10 @@ def update_abc_analysis(
         Output("patient-modal-body", "children"),
     ],
     [Input("f-patient", "value"), Input("close-patient-modal", "n_clicks")],
-    [State("patient-modal", "is_open"), State("theme-store", "data")],
+    [State("patient-modal", "is_open")],
     prevent_initial_call=True,
 )
-def toggle_patient_modal(patient_id, close_clicks, is_open, theme):
+def toggle_patient_modal(patient_id, close_clicks, is_open):
     ctx = dash.callback_context
     if not ctx.triggered:
         return is_open, dash.no_update, dash.no_update
@@ -3107,26 +3906,56 @@ def toggle_patient_modal(patient_id, close_clicks, is_open, theme):
         return False, dash.no_update, dash.no_update
 
     if trigger_id == "f-patient" and patient_id and str(patient_id).strip() != "":
+        clean_id = str(patient_id).strip()
         df = get_optimized_data()
+
         if df.empty or "Номер ИБ" not in df.columns:
-            return is_open, dash.no_update, dash.no_update
-        pat_df = df[
-            df["Номер ИБ"].astype(str).str.contains(str(patient_id), case=False)
-        ].copy()
+            return (
+                True,
+                "Ошибка",
+                html.Div("Нет данных в базе.", style={"padding": "20px"}),
+            )
+
+        mask = df["Номер ИБ"].astype(str).str.contains(clean_id, case=False, na=False)
+        pat_df = df[mask].copy()
+
         if pat_df.empty:
-            return is_open, dash.no_update, dash.no_update
+            not_found_msg = html.Div(
+                [
+                    html.I(
+                        className="fas fa-exclamation-circle",
+                        style={"marginRight": "10px"},
+                    ),
+                    f"Пациент с ИБ «{clean_id}» не найден.",
+                ],
+                style={
+                    "padding": "20px",
+                    "color": "#E11D48",
+                    "fontWeight": "bold",
+                    "fontSize": "16px",
+                },
+            )
+            return True, "Результат поиска", not_found_msg
+
+        dedup_cols = ["Номер ИБ", "Код Услуги", "Сумма"]
+        if "dt" in pat_df.columns:
+            dedup_cols.append("dt")
+        pat_df = pat_df.drop_duplicates(subset=dedup_cols)
 
         total_spent = pat_df["Сумма"].sum() if "Сумма" in pat_df.columns else 0
-        total_visits, depts_visited = len(pat_df), (
+        total_visits = len(pat_df)
+        depts_visited = (
             pat_df["Наименование отделения"].nunique()
             if "Наименование отделения" in pat_df.columns
             else 0
         )
-        period_str = (
-            f"{MONTHS_RU.get(pat_df['dt'].min().month, '')} {pat_df['dt'].min().year} - {MONTHS_RU.get(pat_df['dt'].max().month, '')} {pat_df['dt'].max().year}"
-            if "dt" in pat_df.columns and not pat_df["dt"].isnull().all()
-            else "Н/Д"
-        )
+
+        valid_dates = pat_df["dt"].dropna() if "dt" in pat_df.columns else pd.Series()
+        if not valid_dates.empty:
+            min_dt, max_dt = valid_dates.min(), valid_dates.max()
+            period_str = f"{MONTHS_RU.get(min_dt.month, '')} {min_dt.year} - {MONTHS_RU.get(max_dt.month, '')} {max_dt.year}"
+        else:
+            period_str = "Н/Д"
 
         history_items = []
         if "dt" in pat_df.columns:
@@ -3359,125 +4188,17 @@ def toggle_patient_modal(patient_id, close_clicks, is_open, theme):
                 ),
             ]
         )
-        return True, f"Карточка истории болезни: {patient_id}", modal_body
+        return True, f"Карточка истории болезни: {clean_id}", modal_body
     return is_open, dash.no_update, dash.no_update
 
 
-# --- SQL ПЕСОЧНИЦА ---
-@app.callback(
-    [
-        Output("main-line-chart", "figure", allow_duplicate=True),
-        Output("main-chart-title", "children", allow_duplicate=True),
-        Output("sql-error", "children"),
-        Output("smart-insights-container", "children", allow_duplicate=True),
-    ],
-    Input("btn-execute-sql", "n_clicks"),
-    [State("sql-input", "value"), State("theme-store", "data")],
-    prevent_initial_call=True,
-)
-def execute_custom_sql(n_clicks, query, theme):
-    sql_insight = html.Div(
-        [
-            html.I(
-                className="fas fa-bolt",
-                style={"color": "#FF7D00", "marginRight": "12px", "fontSize": "20px"},
-            ),
-            html.Span(
-                "DuckDB: ", style={"fontWeight": "800", "color": "var(--text-main)"}
-            ),
-            html.Span(
-                "Запрос выполнен. Модальная детализация в этом режиме отключена.",
-                style={"color": "var(--text-muted)"},
-            ),
-        ]
-    )
-    if not query or not query.strip():
-        return dash.no_update, dash.no_update, "", dash.no_update
-    try:
-        df = get_optimized_data()
-        safe_query = query.replace("[", '"').replace("]", '"')
-        duckdb.register("medical_data", df)
-        df_sql = duckdb.query(safe_query).df()
-        if df_sql.empty:
-            return (
-                dash.no_update,
-                dash.no_update,
-                "✅ Запрос выполнен успешно (0 строк).",
-                dash.no_update,
-            )
-
-        fig = go.Figure()
-        x_col = df_sql.columns[0]
-        max_y_value, color_idx, has_numeric = 0, 0, False
-        colors = [
-            {"hex": "#4318FF", "rgba": "rgba(67, 24, 255, 0.15)"},
-            {"hex": "#FF7D00", "rgba": "rgba(255, 125, 0, 0.15)"},
-            {"hex": "#01B574", "rgba": "rgba(1, 181, 116, 0.15)"},
-        ]
-
-        for col in df_sql.columns[1:]:
-            if pd.api.types.is_numeric_dtype(df_sql[col]):
-                has_numeric = True
-                if df_sql[col].max() > max_y_value:
-                    max_y_value = df_sql[col].max()
-                c = colors[color_idx % len(colors)]
-                y_format = (
-                    "%{y:,.2f} ₽"
-                    if "сумм" in str(col).lower() or "sum" in str(col).lower()
-                    else "%{y:,.0f}"
-                )
-                fig.add_trace(
-                    go.Scatter(
-                        x=df_sql[x_col],
-                        y=df_sql[col],
-                        name=str(col),
-                        mode="lines+markers",
-                        line=dict(width=4, shape="linear", color=c["hex"]),
-                        marker=dict(size=12, color=c["hex"]),
-                        fill="tozeroy",
-                        fillcolor=c["rgba"],
-                        hovertemplate=f"<b>Ось X:</b> %{{x}}<br><b>{str(col)}:</b> {y_format}<extra></extra>",
-                        customdata=["SQL|None"] * len(df_sql),
-                    )
-                )
-                color_idx += 1
-
-        if not has_numeric:
-            return (
-                dash.no_update,
-                dash.no_update,
-                "⚠️ Нужна хотя бы одна числовая колонка.",
-                dash.no_update,
-            )
-        x_range = [-0.5, len(df_sql) - 0.5]
-        y_padding = max_y_value * 0.05 if max_y_value > 0 else 10
-        tickvals = df_sql[x_col].tolist()
-        ticktext = [
-            str(v) if len(str(v)) <= 35 else str(v)[:32] + "..." for v in df_sql[x_col]
-        ]
-
-        fig = apply_beautiful_layout(
-            fig, theme, x_range=x_range, tickvals=tickvals, ticktext=ticktext
-        )
-        fig.update_yaxes(range=[-y_padding, max_y_value + y_padding])
-        fig.update_layout(xaxis_tickangle=-30)
-        return fig, "Аналитика (DuckDB Режим 🚀)", "", sql_insight
-    except Exception as e:
-        return (
-            dash.no_update,
-            dash.no_update,
-            f"❌ Ошибка DuckDB: {str(e)}",
-            dash.no_update,
-        )
-
-
-# 🚀 5.2. CALLBACK ДЛЯ СБОРКИ АВТО-ИНСАЙТОВ (ПОД ПЕСОЧНИЦЕЙ)
 @app.callback(
     Output("auto-insights-container", "children"),
     [
         Input("btn-apply-filters", "n_clicks"),
         Input("btn-reset-all-filters", "n_clicks"),
         Input("btn-execute-sql", "n_clicks"),
+        Input("main-tabs", "active_tab"),
     ],
     [
         State("f-year", "value"),
@@ -3489,18 +4210,35 @@ def execute_custom_sql(n_clicks, query, theme):
     ],
 )
 def build_auto_insights(
-    n_apply, n_reset, n_sql, years, quarters, months, depts, profiles, mes_list
+    n_apply,
+    n_reset,
+    n_sql,
+    active_tab,
+    years,
+    quarters,
+    months,
+    depts,
+    profiles,
+    mes_list,
 ):
+    if active_tab != "tab-main":
+        return dash.no_update
+
     df = get_optimized_data()
     if df.empty:
         return ""
     conn = get_duck_conn(df)
+
     where_base = build_where_clause(
         years, quarters, months, depts, profiles, mes_list, patient=None
     )
 
-    top_month = conn.execute(f'SELECT Month_Str, SUM(Сумма) AS s FROM (SELECT DISTINCT "Номер ИБ", "Код Услуги", Month_Str, Сумма FROM df WHERE {where_base}) GROUP BY Month_Str ORDER BY s DESC LIMIT 1').fetchone()
-    top_dept = conn.execute(f'SELECT "Наименование отделения", SUM(Сумма) AS s FROM (SELECT DISTINCT "Номер ИБ", "Код Услуги", "Наименование отделения", Сумма FROM df WHERE {where_base}) GROUP BY "Наименование отделения" ORDER BY s DESC LIMIT 1').fetchone()
+    top_month = conn.execute(
+        f'SELECT Month_Str, SUM(Сумма) AS s FROM (SELECT DISTINCT "Номер ИБ", "Код Услуги", Month_Str, Сумма FROM df WHERE {where_base}) GROUP BY Month_Str ORDER BY s DESC LIMIT 1'
+    ).fetchone()
+    top_dept = conn.execute(
+        f'SELECT "Наименование отделения", SUM(Сумма) AS s FROM (SELECT DISTINCT "Номер ИБ", "Код Услуги", "Наименование отделения", Сумма FROM df WHERE {where_base}) GROUP BY "Наименование отделения" ORDER BY s DESC LIMIT 1'
+    ).fetchone()
 
     active_depts = (
         conn.execute(
@@ -3566,7 +4304,7 @@ def build_auto_insights(
         cards.append(
             insight_card(
                 "Топ-отделение по выручке",
-                f"{str(top_dept[0])[:25]}...: {top_dept[1]:,.2f} ₽".replace(
+                f"{str(top_dept[0])[:25]}: {top_dept[1]:,.2f} ₽".replace(
                     ",", " "
                 ).replace(".", ","),
                 "fas fa-hospital",
@@ -3585,7 +4323,7 @@ def build_auto_insights(
     return html.Div(
         [
             html.H5(
-                "Авто-инсайты по данным",
+                "Авто-выводы по данным",
                 style={"fontWeight": "800", "fontSize": "15px", "marginBottom": "10px"},
             ),
             html.Div(
@@ -3600,293 +4338,124 @@ def build_auto_insights(
         style={"marginTop": "10px"},
     )
 
+
 @app.callback(
     [
-        Output("yoy-modal", "is_open"),
-        Output("yoy-modal-title", "children"),
-        Output("yoy-modal-body", "children"),
-        Output("f-yoy", "value", allow_duplicate=True)
+        Output("main-line-chart", "figure", allow_duplicate=True),
+        Output("main-chart-title", "children", allow_duplicate=True),
+        Output("sql-error", "children"),
+        Output("smart-insights-container", "children", allow_duplicate=True),
     ],
-    [
-        Input("f-yoy", "value"),
-        Input("close-yoy-modal", "n_clicks")
-    ],
-    [
-        State("yoy-modal", "is_open"),
-        State("f-year", "value"),
-        State("f-quarter", "value"),
-        State("f-month", "value"),
-        State("f-dept", "value"),
-        State("f-profile", "value"),
-        State("f-mes", "value"),
-        State("f-patient", "value")
-    ],
-    prevent_initial_call=True
+    [Input("btn-execute-sql", "n_clicks")],
+    [State("sql-input", "value"), State("theme-store", "data")],
+    prevent_initial_call=True,
 )
-def toggle_yoy_comparison(yoy_val, close_clicks, is_open, years, quarters, months, depts, profiles, mes_list, patient):
-    ctx = dash.callback_context
-    trig = ctx.triggered[0]["prop_id"].split(".")[0]
+def execute_custom_sql(n_clicks, query, theme):
+    # 🚀 Игнорируем холостые срабатывания
+    if not n_clicks or n_clicks == 0:
+        raise dash.exceptions.PreventUpdate
 
-    if trig == "close-yoy-modal":
-        return False, dash.no_update, dash.no_update, [] 
+    sql_insight = html.Div(
+        [
+            html.I(
+                className="fas fa-bolt",
+                style={"color": "#FF7D00", "marginRight": "12px", "fontSize": "20px"},
+            ),
+            html.Span(
+                "DuckDB: ", style={"fontWeight": "800", "color": "var(--text-main)"}
+            ),
+            html.Span(
+                "Запрос выполнен. Модальная детализация в этом режиме отключена.",
+                style={"color": "var(--text-muted)"},
+            ),
+        ]
+    )
 
-    if trig == "f-yoy" and yoy_val and True in yoy_val:
+    if not query or not query.strip():
+        return dash.no_update, dash.no_update, "", dash.no_update
+
+    try:
         df = get_optimized_data()
-        if df.empty:
-            return True, "Сравнение с прошлым годом", html.Div("Нет данных в базе"), dash.no_update
+        safe_query = query.replace("[", '"').replace("]", '"')
+        conn = duckdb.connect()
+        conn.register("medical_data", df)
+        df_sql = conn.execute(safe_query).df()
 
-        max_year_overall = int(df["Year"].max())
-        target_year = max(years) if years else max_year_overall
-        cy = target_year
-        py = cy - 1
-
-        where_base = build_where_clause(None, quarters, months, depts, profiles, mes_list, patient)
-
-        conn = get_duck_conn(df)
-        
-        # Твоя логика с DISTINCT в подзапросах
-        query_totals = f'''
-            SELECT 
-                "Year",
-                SUM(Сумма) as total_sum,
-                COUNT(DISTINCT "Номер ИБ") as total_patients,
-                COUNT(*) as total_mes
-            FROM (
-                SELECT DISTINCT "Номер ИБ", "Код Услуги", "Year", Сумма 
-                FROM df 
-                WHERE {where_base} AND "Year" IN ({cy}, {py})
+        if df_sql.empty:
+            return (
+                dash.no_update,
+                dash.no_update,
+                "✅ Запрос выполнен успешно (0 строк).",
+                dash.no_update,
             )
-            GROUP BY "Year"
-        '''
-        res_totals = conn.execute(query_totals).df()
 
-        query_depts = f'''
-            WITH dept_stats AS (
-                SELECT 
-                    "Наименование отделения" as dept,
-                    SUM(CASE WHEN "Year" = {cy} THEN Сумма ELSE 0 END) as sum_cy,
-                    SUM(CASE WHEN "Year" = {py} THEN Сумма ELSE 0 END) as sum_py
-                FROM (
-                    SELECT DISTINCT "Номер ИБ", "Код Услуги", "Наименование отделения", "Year", Сумма 
-                    FROM df WHERE {where_base} AND "Year" IN ({cy}, {py})
-                )
-                GROUP BY "Наименование отделения"
-            )
-            SELECT dept, sum_cy, sum_py 
-            FROM dept_stats 
-            ORDER BY sum_cy DESC 
-            LIMIT 3
-        '''
-        res_depts = conn.execute(query_depts).df()
-
-        query_services = f'''
-            WITH mes_stats AS (
-                SELECT 
-                    "Код Услуги" as mes,
-                    SUM(CASE WHEN "Year" = {cy} THEN Сумма ELSE 0 END) as sum_cy,
-                    SUM(CASE WHEN "Year" = {py} THEN Сумма ELSE 0 END) as sum_py
-                FROM (
-                    SELECT DISTINCT "Номер ИБ", "Код Услуги", "Year", Сумма 
-                    FROM df WHERE {where_base} AND "Year" IN ({cy}, {py})
-                )
-                GROUP BY "Код Услуги"
-            )
-            SELECT mes, sum_cy, sum_py, (sum_cy - sum_py) as growth
-            FROM mes_stats
-            ORDER BY growth DESC 
-            LIMIT 3
-        '''
-        res_services = conn.execute(query_services).df()
-
-        stats = {cy: {"sum": 0, "pat": 0, "mes": 0}, py: {"sum": 0, "pat": 0, "mes": 0}}
-        for _, row in res_totals.iterrows():
-            y = int(row["Year"])
-            if y in stats:
-                stats[y] = {"sum": row["total_sum"], "pat": row["total_patients"], "mes": row["total_mes"]}
-
-        avg_check_cy = stats[cy]["sum"] / stats[cy]["pat"] if stats[cy]["pat"] > 0 else 0
-        avg_check_py = stats[py]["sum"] / stats[py]["pat"] if stats[py]["pat"] > 0 else 0
-
-        def make_yoy_row(title, val_cy, val_py, is_currency=False):
-            fmt = lambda x: f"{x:,.2f} ₽".replace(",", " ").replace(".", ",") if is_currency else f"{int(x):,.0f} шт.".replace(",", " ")
-            diff = val_cy - val_py
-            pct = (diff / val_py * 100) if val_py > 0 else 0
-            
-            color = "#01B574" if diff >= 0 else "#E11D48"
-            bg_color = "rgba(1,181,116,0.1)" if diff >= 0 else "rgba(225,29,72,0.1)"
-            icon = "fa-arrow-up" if diff >= 0 else "fa-arrow-down"
-            sign = "+" if diff > 0 else ""
-            
-            return html.Div([
-                html.Div([html.I(className="fas fa-chart-line", style={"marginRight": "10px", "color": "var(--primary)"}), title], style={"fontWeight": "800", "fontSize": "15px", "color": "var(--text-main)", "marginBottom": "15px"}),
-                html.Div([
-                    html.Div([html.Span(f"{py} год", style={"color": "var(--text-muted)", "fontSize": "12px", "display": "block", "fontWeight": "600"}), html.B(fmt(val_py), style={"fontSize": "20px", "color": "var(--text-main)"})], style={"flex": 1}),
-                    html.Div([html.Span(f"{cy} год", style={"color": "var(--text-muted)", "fontSize": "12px", "display": "block", "fontWeight": "600"}), html.B(fmt(val_cy), style={"fontSize": "20px", "color": "var(--primary)"})], style={"flex": 1}),
-                    html.Div([
-                        html.Span([html.I(className=f"fas {icon}", style={"marginRight": "6px"}), f"{sign}{fmt(diff)}"], style={"display": "block", "fontWeight": "bold", "fontSize": "14px"}),
-                        html.Span(f"({sign}{pct:.1f}%)", style={"fontSize": "12px", "fontWeight": "600"})
-                    ], style={"flex": 1, "textAlign": "right", "color": color, "backgroundColor": bg_color, "padding": "10px 15px", "borderRadius": "12px"})
-                ], style={"display": "flex", "alignItems": "center", "justifyContent": "space-between"})
-            ], style={"backgroundColor": "var(--card-bg)", "padding": "25px", "borderRadius": "16px", "marginBottom": "15px", "border": "2px solid var(--grid-color)", "boxShadow": "var(--shadow)"})
-
-        def make_compact_yoy_row(title, val_cy, val_py, is_currency=True):
-            fmt = lambda x: f"{x:,.2f} ₽".replace(",", " ").replace(".", ",") if is_currency else f"{int(x):,.0f} шт.".replace(",", " ")
-            diff = val_cy - val_py
-            pct = (diff / val_py * 100) if val_py > 0 else 0
-            
-            color = "#01B574" if diff >= 0 else "#E11D48"
-            bg_color = "rgba(1,181,116,0.1)" if diff >= 0 else "rgba(225,29,72,0.1)"
-            icon = "fa-arrow-up" if diff >= 0 else "fa-arrow-down"
-            sign = "+" if diff > 0 else ""
-
-            return html.Div([
-                html.Div(title, style={"fontWeight": "700", "fontSize": "13px", "color": "var(--text-main)", "marginBottom": "8px", "whiteSpace": "nowrap", "overflow": "hidden", "textOverflow": "ellipsis"}),
-                html.Div([
-                    html.Div([
-                        html.Span(f"{py} год", style={"color": "var(--text-muted)", "fontSize": "11px", "display": "block"}), 
-                        html.B(fmt(val_py), style={"fontSize": "14px", "color": "var(--text-main)"})
-                    ], style={"flex": 1}),
-                    html.Div([
-                        html.Span(f"{cy} год", style={"color": "var(--text-muted)", "fontSize": "11px", "display": "block"}), 
-                        html.B(fmt(val_cy), style={"fontSize": "14px", "color": "var(--primary)"})
-                    ], style={"flex": 1}),
-                    html.Div([
-                        html.Span([html.I(className=f"fas {icon}", style={"marginRight": "4px"}), f"{sign}{fmt(diff)}"], style={"display": "block", "fontWeight": "bold", "fontSize": "12px"}),
-                        html.Span(f"({sign}{pct:.1f}%)", style={"fontSize": "11px", "fontWeight": "600"})
-                    ], style={"flex": 1, "textAlign": "right", "color": color, "backgroundColor": bg_color, "padding": "6px 10px", "borderRadius": "8px"})
-                ], style={"display": "flex", "alignItems": "center", "justifyContent": "space-between"})
-            ], style={"backgroundColor": "var(--card-bg)", "padding": "15px", "borderRadius": "12px", "marginBottom": "10px", "border": "1px solid var(--grid-color)"})
-
-        dept_components = [
-            html.H5("🏥 Топ-3 отделения (по выручке)", style={"fontWeight": "800", "color": "var(--text-main)", "marginTop": "25px", "marginBottom": "15px", "fontSize": "16px"})
+        fig = go.Figure()
+        x_col = df_sql.columns[0]
+        max_y_value = 0
+        color_idx = 0
+        has_numeric = False
+        colors = [
+            {"hex": "#4318FF", "rgba": "rgba(67, 24, 255, 0.15)"},
+            {"hex": "#FF7D00", "rgba": "rgba(255, 125, 0, 0.15)"},
+            {"hex": "#01B574", "rgba": "rgba(1, 181, 116, 0.15)"},
         ]
-        if res_depts.empty:
-            dept_components.append(html.Div("Нет данных", style={"color": "var(--text-muted)", "fontSize": "13px"}))
-        else:
-            for _, row in res_depts.iterrows():
-                dept_components.append(make_compact_yoy_row(str(row["dept"]), row["sum_cy"], row["sum_py"], is_currency=True))
 
-        service_components = [
-            html.H5("📈 Топ-3 быстрорастущие услуги (по приросту выручки)", style={"fontWeight": "800", "color": "var(--text-main)", "marginTop": "25px", "marginBottom": "15px", "fontSize": "16px"})
+        for col in df_sql.columns[1:]:
+            if pd.api.types.is_numeric_dtype(df_sql[col]):
+                has_numeric = True
+                if df_sql[col].max() > max_y_value:
+                    max_y_value = df_sql[col].max()
+                c = colors[color_idx % len(colors)]
+                y_format = (
+                    "%{y:,.2f} ₽"
+                    if "сумм" in str(col).lower() or "sum" in str(col).lower()
+                    else "%{y:,.0f}"
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=df_sql[x_col],
+                        y=df_sql[col],
+                        name=str(col),
+                        mode="lines+markers",
+                        line=dict(width=4, shape="linear", color=c["hex"]),
+                        marker=dict(size=12, color=c["hex"]),
+                        fill="tozeroy",
+                        fillcolor=c["rgba"],
+                        hovertemplate=f"<b>Ось X:</b> %{{x}}<br><b>{str(col)}:</b> {y_format}<extra></extra>",
+                        customdata=["SQL|None"] * len(df_sql),
+                    )
+                )
+                color_idx += 1
+
+        if not has_numeric:
+            return (
+                dash.no_update,
+                dash.no_update,
+                "⚠️ Нужна хотя бы одна числовая колонка.",
+                dash.no_update,
+            )
+
+        x_range = [-0.5, len(df_sql) - 0.5]
+        y_padding = max_y_value * 0.05 if max_y_value > 0 else 10
+        tickvals = df_sql[x_col].tolist()
+        ticktext = [
+            str(v) if len(str(v)) <= 35 else str(v)[:32] + "..." for v in df_sql[x_col]
         ]
-        if res_services.empty:
-            service_components.append(html.Div("Нет данных", style={"color": "var(--text-muted)", "fontSize": "13px"}))
-        else:
-            for _, row in res_services.iterrows():
-                mes_code = str(row['mes'])
-                if mes_code.endswith('.0'):
-                    mes_code = mes_code[:-2]
-                
-                service_components.append(make_compact_yoy_row(f"МЭС: {mes_code}", row["sum_cy"], row["sum_py"], is_currency=True))
 
+        fig = apply_beautiful_layout(
+            fig, theme, x_range=x_range, tickvals=tickvals, ticktext=ticktext
+        )
+        fig.update_yaxes(range=[-y_padding, max_y_value + y_padding])
+        fig.update_layout(xaxis_tickangle=-30)
 
-        modal_body = html.Div([
-            html.Div(f"Анализ проводится с учетом текущих фильтров. Год для сравнения выбран автоматически.", style={"color": "var(--text-muted)", "marginBottom": "20px", "fontSize": "13px"}),
-            make_yoy_row("ВЫРУЧКА (ОБЩАЯ СУММА)", stats[cy]["sum"], stats[py]["sum"], is_currency=True),
-            make_yoy_row("СРЕДНИЙ ЧЕК ПАЦИЕНТА", avg_check_cy, avg_check_py, is_currency=True),
-            make_yoy_row("УНИКАЛЬНЫХ ПАЦИЕНТОВ", stats[cy]["pat"], stats[py]["pat"]),
-            make_yoy_row("ОКАЗАННЫХ УСЛУГ (МЭС)", stats[cy]["mes"], stats[py]["mes"]),
-            
-            html.Div(dept_components),
-            html.Div(service_components)
-        ])
-
-        return True, f"Сравнение {cy} vs {py} (YoY)", modal_body, dash.no_update
-
-    return is_open, dash.no_update, dash.no_update, dash.no_update
-
-# --- ЭКСПОРТ EXCEL И КЛИЕНТСКИЕ КОЛЛБЭКИ ---
-@app.callback(
-    Output("download-xlsx", "data"),
-    Input("btn-dl", "n_clicks"),
-    [
-        State("f-year", "value"),
-        State("f-quarter", "value"),
-        State("f-month", "value"),
-        State("f-dept", "value"),
-        State("f-profile", "value"),
-        State("f-mes", "value"),
-    ],
-    prevent_initial_call=True,
-)
-def export_excel(n_clicks, years, quarters, months, depts, profiles, mes_list):
-    df = get_optimized_data()
-    mask = pd.Series(True, index=df.index)
-    if years:
-        mask &= df["Year"].isin(years)
-    if quarters:
-        mask &= df["Quarter_Name"].isin(quarters)
-    if months:
-        mask &= df["Month_Name"].isin(months)
-    if depts:
-        mask &= df["Наименование отделения"].isin(depts)
-    if profiles:
-        mask &= df["Наименование профиля"].isin(profiles)
-    if mes_list:
-        mask &= df["Код Услуги"].isin(mes_list)
-
-    filtered_df = df[mask].copy()
-    cols_to_drop = [
-        "dt",
-        "Year",
-        "Month_Num",
-        "Month_Name",
-        "Quarter_Num",
-        "Quarter_Name",
-        "YearMonth",
-        "Month_Str",
-    ]
-    filtered_df = filtered_df.drop(
-        columns=[col for col in cols_to_drop if col in filtered_df.columns]
-    )
-    return dcc.send_data_frame(
-        filtered_df.to_excel, "Clinical_Report_Export.xlsx", index=False
-    )
-
-
-app.clientside_callback(
-    "function(n_clicks) { if (n_clicks) { return true; } return window.dash_clientside.no_update; }",
-    Output("interactive-grid", "exportDataAsCsv"),
-    Input("btn-export-grid", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-
-@app.callback(
-    Output("heatmap-chart", "clickData"),
-    Input("btn-reset-crossfilter", "n_clicks"),
-    prevent_initial_call=True,
-)
-def reset_heatmap_selection(n_clicks):
-    return None
-
-
-app.clientside_callback(
-    "function(n, c) { if(!n) return window.dash_clientside.no_update; const t = c === 'light' ? 'dark' : 'light'; document.documentElement.setAttribute('data-theme', t); return t; }",
-    Output("theme-store", "data"),
-    Input("theme-toggle", "n_clicks"),
-    State("theme-store", "data"),
-)
-
-
-@app.callback(Output("theme-icon", "className"), Input("theme-store", "data"))
-def update_icon(theme):
-    return "fas fa-sun" if theme == "dark" else "fas fa-moon"
-
-
-app.clientside_callback(
-    "function(n) { if (n) { var e = document.getElementById('pdf-export-container'); var w = e.offsetWidth; var h = e.offsetHeight; html2pdf().set({margin: 20, filename: 'Clinical_Chart.pdf', image: { type: 'jpeg', quality: 1.0 }, html2canvas: { scale: 2, useCORS: true, logging: false }, jsPDF: { unit: 'px', format: [w + 40, h + 40], orientation: 'landscape' }}).from(e).save(); } return window.dash_clientside.no_update; }",
-    Output("btn-pdf", "id"),
-    Input("btn-pdf", "n_clicks"),
-    prevent_initial_call=True,
-)
-
-app.clientside_callback(
-    r"""function(sql_text) { if (!sql_text || sql_text.trim() === "") return ["", {"display": "none"}]; var warnings = []; var text = sql_text.trim(); if (!text.endsWith(';')) warnings.push("⚠️ Забыта точка с запятой ( ; ) в конце"); var openParens = (text.match(/\(/g) || []).length; var closeParens = (text.match(/\)/g) || []).length; if (openParens !== closeParens) warnings.push("⚠️ Незакрытые круглые скобки ( )"); var openBrackets = (text.match(/\[/g) || []).length; var closeBrackets = (text.match(/\]/g) || []).length; if (openBrackets !== closeBrackets) warnings.push("⚠️ Незакрытые квадратные скобки [ ]"); var singleQuotes = (text.match(/'/g) || []).length; if (singleQuotes % 2 !== 0) warnings.push("⚠️ Пропущена одинарная кавычка '"); var baseStyle = {"marginTop": "8px", "fontSize": "13px", "fontWeight": "600", "minHeight": "20px", "transition": "color 0.3s ease"}; if (warnings.length > 0) { baseStyle["color"] = "#FF7D00"; return [warnings.join("   |   "), baseStyle]; } else { baseStyle["color"] = "#01B574"; return ["✅ Синтаксис выглядит отлично!", baseStyle]; } }""",
-    [Output("sql-modal-linter", "children"), Output("sql-modal-linter", "style")],
-    Input("sql-modal-input", "value"),
-    prevent_initial_call=False,
-)
+        return fig, "Аналитика", "", sql_insight
+    except Exception as e:
+        return (
+            dash.no_update,
+            dash.no_update,
+            f"❌ Ошибка SQL: {str(e)}",
+            dash.no_update,
+        )
 
 
 @app.callback(
@@ -3910,15 +4479,232 @@ app.clientside_callback(
 def toggle_sql_editor(exp, save, close, is_open, main_text, modal_text):
     ctx = dash.callback_context
     if not ctx.triggered:
-        return is_open, dash.no_update, dash.no_update
+        raise dash.exceptions.PreventUpdate
+
     trig = ctx.triggered[0]["prop_id"].split(".")[0]
+
     if trig == "btn-expand-sql":
         return True, main_text, dash.no_update
     elif trig == "btn-save-sql-modal":
         return False, dash.no_update, modal_text
     elif trig == "btn-close-sql-modal":
         return False, dash.no_update, dash.no_update
-    return is_open, dash.no_update, dash.no_update
+
+    raise dash.exceptions.PreventUpdate
+
+
+@app.callback(
+    [
+        Output("presets-store", "data"),
+        Output("dropdown-load-preset", "options"),
+        Output("preset-msg", "children"),
+    ],
+    [Input("btn-save-preset", "n_clicks")],
+    [
+        State("input-preset-name", "value"),
+        State("presets-store", "data"),
+        State("f-year", "value"),
+        State("f-quarter", "value"),
+        State("f-month", "value"),
+        State("f-dept", "value"),
+        State("f-profile", "value"),
+        State("f-mes", "value"),
+    ],
+    prevent_initial_call=True,
+)
+def save_preset(
+    n_clicks, name, store_data, years, quarters, months, depts, profiles, mes
+):
+    if not name or name.strip() == "":
+        return dash.no_update, dash.no_update, "❌ Введите название пресета!"
+    store_data = store_data or {}
+    store_data[name] = {
+        "years": years,
+        "quarters": quarters,
+        "months": months,
+        "depts": depts,
+        "profiles": profiles,
+        "mes": mes,
+    }
+    options = [{"label": k, "value": k} for k in store_data.keys()]
+    return store_data, options, f"✅ Сценарий «{name}» успешно сохранен!"
+
+
+@app.callback(
+    [
+        Output("f-year", "value"),
+        Output("f-quarter", "value"),
+        Output("f-month", "value"),
+        Output("f-dept", "value"),
+        Output("f-profile", "value"),
+        Output("f-mes", "value"),
+    ],
+    [Input("dropdown-load-preset", "value")],
+    [State("presets-store", "data")],
+    prevent_initial_call=True,
+)
+def load_preset(selected_preset, store_data):
+    if not selected_preset or not store_data or selected_preset not in store_data:
+        return (
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+        )
+    p = store_data[selected_preset]
+    return (
+        p.get("years"),
+        p.get("quarters"),
+        p.get("months"),
+        p.get("depts"),
+        p.get("profiles"),
+        p.get("mes"),
+    )
+
+
+# --- CLIENTSIDE JAVASCRIPT ---
+app.clientside_callback(
+    """
+    function(clickData, closeSmall, closeLarge, resetBtn) { 
+        const triggered = dash_clientside.callback_context.triggered.map(t => t.prop_id); 
+        const no_upd = window.dash_clientside.no_update;
+
+        function clearPlotlySelection() { 
+            const graphDiv = document.getElementById('main-line-chart'); 
+            if (graphDiv && window.Plotly) { 
+                window.Plotly.restyle(graphDiv, 'selectedpoints', null); 
+            } 
+        } 
+
+        // 1. Если нажали кнопку сброса или закрыли модалки -> чистим график
+        if (triggered.includes('btn-reset-selection.n_clicks') || 
+            triggered.includes('btn-close-modal.n_clicks') || 
+            triggered.includes('close-modal.n_clicks')) { 
+            clearPlotlySelection(); 
+            return [null, null, no_upd]; // Обнуляем clickData и selectedData
+        } 
+
+        // 2. Если кликнули по графику
+        if (triggered.includes('main-line-chart.clickData')) { 
+            // Если Shift НЕ нажат — чистим выделение и передаем клик в Store
+            if (!window.isShiftPressed && clickData) { 
+                clearPlotlySelection(); 
+                // Возвращаем: [не_трогаем_клик, чистим_выделение, ОТПРАВЛЯЕМ_ДАННЫЕ_В_МОДАЛКУ]
+                return [no_upd, null, clickData]; 
+            } 
+        } 
+
+        return [no_upd, no_upd, no_upd]; 
+    }
+    """,
+    [
+        Output("main-line-chart", "clickData"),
+        Output("main-line-chart", "selectedData"),
+        Output("filtered-click-data", "data"),
+    ],
+    [
+        Input("main-line-chart", "clickData"),
+        Input("btn-close-modal", "n_clicks"),
+        Input("close-modal", "n_clicks"),
+        Input("btn-reset-selection", "n_clicks"),
+    ],
+    prevent_initial_call=True,
+)
+
+app.clientside_callback(
+    "function(n_clicks, current_style) { if (!n_clicks) return window.dash_clientside.no_update; let new_style = {...current_style}; if (new_style.height === '500px') { new_style.height = '1300px'; } else { new_style.height = '500px'; } return new_style; }",
+    Output("sunburst-chart", "style"),
+    Input("btn-expand-treemap", "n_clicks"),
+    State("sunburst-chart", "style"),
+    prevent_initial_call=True,
+)
+app.clientside_callback(
+    "function(selectedData) { if (!selectedData || !selectedData.points || selectedData.points.length === 0) { return null; } if (window.isShiftPressed || selectedData.points.length > 1) { return selectedData; } return window.dash_clientside.no_update; }",
+    Output("filtered-selected-data", "data"),
+    Input("main-line-chart", "selectedData"),
+    prevent_initial_call=True,
+)
+
+app.clientside_callback(
+    """
+    function(n_clicks) { 
+        if (n_clicks > 0) { 
+            var element = document.getElementById('pdf-export-container'); 
+            if (element) {
+                var opt = {
+                    margin:       10,
+                    filename:     'Clinical_Dashboard_Report.pdf',
+                    image:        { type: 'jpeg', quality: 0.98 },
+                    html2canvas:  { scale: 2, useCORS: true, logging: false },
+                    jsPDF:        { unit: 'mm', format: 'a3', orientation: 'landscape' }
+                };
+                html2pdf().set(opt).from(element).save(); 
+            }
+        } 
+        return window.dash_clientside.no_update; 
+    }
+    """,
+    Output("btn-pdf", "id"),
+    Input("btn-pdf", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+app.clientside_callback(
+    """
+    function(n_clicks, current_theme) {
+        if (!n_clicks) return [window.dash_clientside.no_update, window.dash_clientside.no_update];
+        const new_theme = current_theme === 'light' ? 'dark' : 'light';
+
+        document.documentElement.setAttribute('data-theme', new_theme);
+
+        const new_icon = new_theme === 'dark' ? 'fas fa-sun' : 'fas fa-moon';
+
+        return [new_theme, new_icon];
+    }
+    """,
+    [
+        Output("theme-store", "data"),
+        Output("theme-icon", "className")
+    ],
+    Input("theme-toggle", "n_clicks"),
+    State("theme-store", "data"),
+    prevent_initial_call=True
+)
+
+app.clientside_callback(
+    """
+    function(clickData) {
+        if (!clickData) return window.dash_clientside.no_update;
+        
+        // Если нажат Shift — игнорируем (это для множественного выделения)
+        if (window.isShiftPressed) {
+            return window.dash_clientside.no_update;
+        }
+        
+        // Отправляем данные в Store, который триггерит открытие модалки
+        return clickData;
+    }
+    """,
+    Output("filtered-click-data", "data"),
+    Input("main-line-chart", "clickData"),
+    prevent_initial_call=True,
+)
+
+app.clientside_callback(
+    """
+    function(n_clicks) { 
+        if (n_clicks > 0) { 
+            return true; 
+        } 
+        return window.dash_clientside.no_update; 
+    }
+    """,
+    Output("interactive-grid", "exportDataAsCsv"),
+    Input("btn-export-grid", "n_clicks"),
+    prevent_initial_call=True,
+)
 
 
 def open_browser():
