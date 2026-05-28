@@ -173,37 +173,65 @@ app.index_string = r"""
         {%css%}
         <style>
             :root {
-                --bg-color: #f5f7fb; 
-                --bg-soft: #eef1fb; 
+                --bg-color: #F8FAFC; 
+                --bg-soft: #F1F5F9; 
                 --card-bg: #ffffff; 
-                --text-main: #1a1a1f;
-                --text-muted: #6b7280; 
-                --grid-color: #e5e7eb;
-                --shadow: 0px 18px 40px rgba(112, 144, 176, 0.12);
-                --sidebar-shadow: 14px 17px 40px 4px rgba(112, 144, 176, 0.08);
-                --primary: #4318FF; 
-                --primary-light: rgba(67, 24, 255, 0.1);
-                --chip-bg: #eef2ff; 
-                --chip-text: #111827; 
-                --chip-border: #c7d2fe;
-                --shadow-soft: 0 4px 12px rgba(15, 23, 42, 0.06);
+                --text-main: #0F172A;
+                --text-muted: #64748B; 
+                --grid-color: #E2E8F0;
+                --primary: #0EA5E9; /* Медицинский голубой */
+                --primary-light: rgba(14, 165, 233, 0.1);
+                --success: #10B981;
+                --warning: #F59E0B;
+                --danger: #EF4444;
+                --chip-bg: #E0F2FE; 
+                --chip-text: #0369A1; 
+                --chip-border: #BAE6FD;
+                --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+                --shadow-soft: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
+                --sidebar-shadow: 4px 0 24px rgba(0,0,0,0.04);
             }
             [data-theme="dark"] {
-                --bg-color: #030712; 
-                --bg-soft: #020617; 
-                --card-bg: #020617; 
-                --text-main: #e5e7eb;
-                --text-muted: #9ca3af; 
-                --grid-color: #111827;
-                --primary: #60a5fa; 
-                --primary-light: rgba(67, 24, 255, 0.2);
-                --shadow: 0px 18px 40px rgba(0, 0, 0, 0.4);
-                --sidebar-shadow: 14px 17px 40px 4px rgba(0, 0, 0, 0.5);
-                --chip-bg: #0f172a; 
-                --chip-text: #e5e7eb; 
-                --chip-border: #1f2937;
-                --shadow-soft: 0 4px 16px rgba(0, 0, 0, 0.6);
+                --bg-color: #0F172A; 
+                --bg-soft: #1E293B; 
+                --card-bg: #1E293B;                 
+                --text-main: #F8FAFC;
+                --text-muted: #94A3B8; 
+                --grid-color: #334155;                
+                --primary: #38BDF8; 
+                --primary-light: rgba(56, 189, 248, 0.15);               
+                --chip-bg: #0C4A6E; 
+                --chip-text: #E0F2FE; 
+                --chip-border: #0284C7;
+                --shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+                --shadow-soft: 0 20px 25px -5px rgba(0, 0, 0, 0.4);
+                --sidebar-shadow: 4px 0 24px rgba(0,0,0,0.4);
             }
+
+            button {
+                transition: transform 0.15s ease-out, box-shadow 0.15s ease-out, filter 0.15s ease-out !important;
+            }
+            button:hover {
+                transform: translateY(-2px);
+                filter: brightness(1.1);
+            }
+            button:active {
+                transform: translateY(1px) scale(0.98);
+                filter: brightness(0.9);
+            }
+            .no-print[style*="transparent"]:hover {
+                transform: scale(1.1);
+                box-shadow: none !important;
+            }
+            .tilt-card {
+                transition: box-shadow 0.3s ease, border-color 0.3s ease !important;
+                border: 1px solid transparent !important;
+            }
+            .tilt-card:hover {
+                box-shadow: 0 20px 40px -10px var(--primary-light) !important;
+                border-color: var(--primary-light) !important;
+            }
+
             body { background-color: var(--bg-color); color: var(--text-main); font-family: 'Inter', sans-serif; transition: background-color 0.4s ease, color 0.4s ease; margin: 0; }
             .Select, .Select-value { background-color: transparent !important; }
             .Select-control { background-color: var(--card-bg) !important; border: 2px solid var(--grid-color) !important; border-radius: 16px !important; box-shadow: none !important; padding: 4px 8px !important; }
@@ -637,23 +665,34 @@ def build_tab_1_data(
             for i, group_val in enumerate(top_groups):
                 g_data = trend[trend[group_by_col] == group_val]
                 c = colors[i % len(colors)]
-                custom_data_formatted = [f"STD|{group_val}"] * len(g_data)
+                custom_data_formatted = [[f"STD|{group_val}", str(group_val)] for _ in range(len(g_data))]
 
-                fig.add_trace(
-                    go.Scatter(
-                        x=g_data["dt"],
-                        y=g_data["val"],
-                        name=str(group_val)[:32] + "...",
-                        mode="lines+markers",
-                        line=dict(
-                            width=4, shape="spline", smoothing=1.3, color=c["hex"]
-                        ),
-                        marker=dict(size=12, color=c["hex"]),
-                        fill="tozeroy",
-                        fillcolor=c["rgba"],
-                        customdata=custom_data_formatted,
-                    )
+                if metric == "sum":
+                    y_str = "Выручка: %{y:,.2f} ₽"
+                elif metric == "count_patients":
+                    y_str = "Пациенты: %{y:,.0f} чел."
+                else:
+                    y_str = "Кол-во услуг: %{y:,.0f} ед."
+
+                ht_template = f"<b>{group_by_col}:</b> %{{customdata[1]}}<br><b>Период:</b> %{{x}}<br><b>{y_str}</b><extra></extra>"
+
+                legend_name = str(group_val)
+                if len(legend_name) > 30:
+                    legend_name = legend_name[:27] + "..."
+
+                fig.add_trace(go.Scatter(
+                    x=g_data['dt'], 
+                    y=g_data['val'], 
+                    name=legend_name, 
+                    mode='lines+markers',
+                    line=dict(width=4, shape='spline', smoothing=1.3, color=c["hex"]), 
+                    marker=dict(size=12, color=c["hex"], line=dict(width=2, color="white")),
+                    fill='tozeroy', 
+                    fillcolor=c["rgba"], 
+                    customdata=custom_data_formatted,
+                    hovertemplate=ht_template
                 )
+            )
 
         if "trend" in locals() and not trend.empty:
             if metric == "sum":
@@ -919,7 +958,9 @@ app.layout = html.Div(
         dcc.Store(id="presets-store", storage_type="local", data={}),
         dcc.Store(id="filtered-click-data"),
         dcc.Store(id="filtered-selected-data"),
+
         html.Div(
+            id="sidebar",
             className="no-print",
             style={
                 "position": "fixed",
@@ -932,66 +973,48 @@ app.layout = html.Div(
                 "boxShadow": "var(--sidebar-shadow)",
                 "zIndex": 100,
                 "overflowY": "auto",
+                "transition": "all 0.3s ease",
             },
             children=[
                 html.Div(
-                    [
-                        html.Img(
-                            src=CUSTOM_ICON,
-                            style={
-                                "height": "60px",
-                                "width": "auto",
-                                "display": "block",
-                            },
-                        )
-                    ],
+                    id="sidebar-header-row",
                     style={
                         "marginBottom": "35px",
                         "display": "flex",
                         "alignItems": "center",
+                        "justifyContent": "space-between",
                         "padding": "10px",
+                        "transition": "all 0.3s ease"
                     },
-                ),
-                html.Label(
-                    "Поиск пациента",
-                    style={
-                        "color": "var(--text-main)",
-                        "fontWeight": "700",
-                        "fontSize": "13px",
-                        "marginBottom": "8px",
-                        "textTransform": "uppercase",
-                    },
-                ),
-                dbc.Input(
-                    id="f-patient",
-                    placeholder="Введите номер ИБ и нажмите Enter...",
-                    debounce=True,
-                    className="mb-4",
-                    style={
-                        "borderRadius": "12px",
-                        "border": "2px solid var(--grid-color)",
-                        "padding": "10px",
-                        "backgroundColor": "var(--bg-color)",
-                        "color": "var(--text-main)",
-                    },
-                ),
-                dbc.Checklist(
-                    options=[
-                        {"label": "Сравнить с прошлым годом (YoY)", "value": True}
+                    children=[
+                        html.Div(
+                            id="sidebar-logo-container",
+                            style={"transition": "all 0.3s ease", "opacity": "1", "width": "100%", "overflow": "hidden"},
+                            children=html.Img(
+                                src=CUSTOM_ICON,
+                                style={"height": "45px", "display": "block", "minWidth": "200px"},
+                            ),
+                        ),
+                        html.Button(
+                            html.I(className="fas fa-chevron-left", id="sidebar-arrow-icon"),
+                            id="btn-toggle-sidebar",
+                            n_clicks=0,
+                            style={
+                                "background": "var(--primary-light)", "border": "none", "color": "var(--primary)",
+                                "borderRadius": "50%", "width": "32px", "height": "32px", "minWidth": "32px",
+                                "display": "flex", "alignItems": "center", "justifyContent": "center",
+                                "cursor": "pointer", "zIndex": "10"
+                            }
+                        )
                     ],
-                    id="f-yoy",
-                    value=[],
-                    switch=True,
-                    style={
-                        "color": "var(--primary)",
-                        "fontWeight": "600",
-                        "marginBottom": "25px",
-                    },
                 ),
+
                 html.Div(
-                    [
+                    id="sidebar-content",
+                    style={"display": "block"},
+                    children=[
                         html.Label(
-                            "1. Показатель",
+                            "Поиск пациента",
                             style={
                                 "color": "var(--text-main)",
                                 "fontWeight": "700",
@@ -1000,244 +1023,84 @@ app.layout = html.Div(
                                 "textTransform": "uppercase",
                             },
                         ),
-                        dcc.Dropdown(
-                            id="f-metric",
-                            options=[
-                                {"label": "💰 Общая сумма (₽)", "value": "sum"},
-                                {"label": "📋 Количество услуг", "value": "count_mes"},
-                                {"label": "🧑 Пациенты", "value": "count_patients"},
+                        dbc.Input(id="f-patient", placeholder="Введите номер ИБ и нажмите Enter...", debounce=True, className="mb-4", style={"borderRadius": "12px", "border": "2px solid var(--grid-color)", "padding": "10px", "backgroundColor": "var(--bg-color)", "color": "var(--text-main)"}),
+                        dbc.Checklist(options=[{"label": "Сравнить с прошлым годом (YoY)", "value": True}], id="f-yoy", value=[], switch=True, style={"color": "var(--primary)", "fontWeight": "600", "marginBottom": "25px"}),
+                        html.Div(
+                            [
+                                html.Label("1. Показатель", style={"color": "var(--text-main)", "fontWeight": "700", "fontSize": "13px", "marginBottom": "8px", "textTransform": "uppercase"}),
+                                dcc.Dropdown(id="f-metric", options=[{"label": "💰 Общая сумма (₽)", "value": "sum"}, {"label": "📋 Количество услуг", "value": "count_mes"}, {"label": "🧑 Пациенты", "value": "count_patients"}], value="count_mes", clearable=False),
+                                html.Label("2. Разрез линий", style={"color": "var(--text-main)", "fontWeight": "700", "fontSize": "13px", "marginBottom": "8px", "marginTop": "20px", "textTransform": "uppercase"}),
+                                dcc.Dropdown(id="f-group-by", options=[{"label": "🏥 По отделениям", "value": "Наименование отделения"}, {"label": "📋 По кодам МЭС", "value": "Код Услуги"}, {"label": "🩺 По профилям", "value": "Наименование профиля"}], value="Наименование отделения", clearable=False),
                             ],
-                            value="count_mes",
-                            clearable=False,
+                            style={"marginBottom": "25px", "paddingBottom": "25px", "borderBottom": "2px dashed var(--grid-color)"},
                         ),
-                        html.Label(
-                            "2. Разрез линий",
-                            style={
-                                "color": "var(--text-main)",
-                                "fontWeight": "700",
-                                "fontSize": "13px",
-                                "marginBottom": "8px",
-                                "marginTop": "20px",
-                                "textTransform": "uppercase",
-                            },
+                        html.Label("ФИЛЬТРЫ ДАННЫХ", style={"color": "var(--text-muted)", "fontWeight": "800", "fontSize": "12px", "marginBottom": "15px", "letterSpacing": "1px"}),
+                        dbc.Accordion(
+                            [
+                                dbc.AccordionItem(
+                                    title="Базовые фильтры",
+                                    children=[
+                                        html.Div([html.Label("Год", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}), dcc.Dropdown(id="f-year", multi=True, placeholder="Все года...")]),
+                                        html.Div([html.Label("Квартал", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}), dcc.Dropdown(id="f-quarter", multi=True, placeholder="Все кварталы...")]),
+                                        html.Div([html.Label("Профиль", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}), dcc.Dropdown(id="f-profile", multi=True, placeholder="Все профили...")]),
+                                        html.Div([html.Label("Код услуги", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}), dcc.Dropdown(id="f-mes", multi=True, placeholder="Все коды...")]),
+                                    ],
+                                )
+                            ], start_collapsed=False, always_open=True, style={"marginBottom": "15px"}
                         ),
-                        dcc.Dropdown(
-                            id="f-group-by",
-                            options=[
-                                {
-                                    "label": "🏥 По отделениям",
-                                    "value": "Наименование отделения",
-                                },
-                                {"label": "📋 По кодам МЭС", "value": "Код Услуги"},
-                                {
-                                    "label": "🩺 По профилям",
-                                    "value": "Наименование профиля",
-                                },
-                            ],
-                            value="Наименование отделения",
-                            clearable=False,
+                        dbc.Accordion(
+                            [
+                                dbc.AccordionItem(
+                                    title="Расширенные фильтры",
+                                    children=[
+                                        html.Div([html.Label("Месяц", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}), dcc.Dropdown(id="f-month", multi=True, placeholder="Все месяцы...")]),
+                                        html.Div([html.Label("Отделение", style={"color": "var(--text-main)", "fontWeight": "600", "fontSize": "14px", "marginBottom": "8px"}), dcc.Dropdown(id="f-dept", multi=True, placeholder="Все отделения...")]),
+                                    ],
+                                )
+                            ], start_collapsed=True, always_open=False, style={"marginBottom": "15px"}
                         ),
-                    ],
-                    style={
-                        "marginBottom": "25px",
-                        "paddingBottom": "25px",
-                        "borderBottom": "2px dashed var(--grid-color)",
-                    },
-                ),
-                html.Label(
-                    "ФИЛЬТРЫ ДАННЫХ",
-                    style={
-                        "color": "var(--text-muted)",
-                        "fontWeight": "800",
-                        "fontSize": "12px",
-                        "marginBottom": "15px",
-                        "letterSpacing": "1px",
-                    },
-                ),
-                dbc.Accordion(
-                    [
-                        dbc.AccordionItem(
-                            title="Базовые фильтры",
-                            children=[
-                                html.Div(
-                                    [
-                                        html.Label(
-                                            "Год",
-                                            style={
-                                                "color": "var(--text-main)",
-                                                "fontWeight": "600",
-                                                "fontSize": "14px",
-                                                "marginBottom": "8px",
-                                            },
-                                        ),
-                                        dcc.Dropdown(
-                                            id="f-year",
-                                            multi=True,
-                                            placeholder="Все года...",
-                                        ),
-                                    ]
-                                ),
-                                html.Div(
-                                    [
-                                        html.Label(
-                                            "Квартал",
-                                            style={
-                                                "color": "var(--text-main)",
-                                                "fontWeight": "600",
-                                                "fontSize": "14px",
-                                                "marginBottom": "8px",
-                                            },
-                                        ),
-                                        dcc.Dropdown(
-                                            id="f-quarter",
-                                            multi=True,
-                                            placeholder="Все кварталы...",
-                                        ),
-                                    ]
-                                ),
-                                html.Div(
-                                    [
-                                        html.Label(
-                                            "Профиль",
-                                            style={
-                                                "color": "var(--text-main)",
-                                                "fontWeight": "600",
-                                                "fontSize": "14px",
-                                                "marginBottom": "8px",
-                                            },
-                                        ),
-                                        dcc.Dropdown(
-                                            id="f-profile",
-                                            multi=True,
-                                            placeholder="Все профили...",
-                                        ),
-                                    ]
-                                ),
-                                html.Div(
-                                    [
-                                        html.Label(
-                                            "Код услуги",
-                                            style={
-                                                "color": "var(--text-main)",
-                                                "fontWeight": "600",
-                                                "fontSize": "14px",
-                                                "marginBottom": "8px",
-                                            },
-                                        ),
-                                        dcc.Dropdown(
-                                            id="f-mes",
-                                            multi=True,
-                                            placeholder="Все коды...",
-                                        ),
-                                    ]
-                                ),
-                            ],
-                        )
-                    ],
-                    start_collapsed=False,
-                    always_open=True,
-                    style={"marginBottom": "15px"},
-                ),
-                dbc.Accordion(
-                    [
-                        dbc.AccordionItem(
-                            title="Расширенные фильтры",
-                            children=[
-                                html.Div(
-                                    [
-                                        html.Label(
-                                            "Месяц",
-                                            style={
-                                                "color": "var(--text-main)",
-                                                "fontWeight": "600",
-                                                "fontSize": "14px",
-                                                "marginBottom": "8px",
-                                            },
-                                        ),
-                                        dcc.Dropdown(
-                                            id="f-month",
-                                            multi=True,
-                                            placeholder="Все месяцы...",
-                                        ),
-                                    ]
-                                ),
-                                html.Div(
-                                    [
-                                        html.Label(
-                                            "Отделение",
-                                            style={
-                                                "color": "var(--text-main)",
-                                                "fontWeight": "600",
-                                                "fontSize": "14px",
-                                                "marginBottom": "8px",
-                                            },
-                                        ),
-                                        dcc.Dropdown(
-                                            id="f-dept",
-                                            multi=True,
-                                            placeholder="Все отделения...",
-                                        ),
-                                    ]
-                                ),
-                            ],
-                        )
-                    ],
-                    start_collapsed=True,
-                    always_open=False,
-                    style={"marginBottom": "15px"},
-                ),
-                dbc.Button(
-                    [
-                        html.I(className="fas fa-check", style={"marginRight": "10px"}),
-                        "Применить фильтры",
-                    ],
-                    id="btn-apply-filters",
-                    style={
-                        "width": "100%",
-                        "backgroundColor": "#01B574",
-                        "border": "none",
-                        "borderRadius": "16px",
-                        "padding": "14px",
-                        "fontWeight": "600",
-                        "marginTop": "5px",
-                        "boxShadow": "0px 10px 20px rgba(1, 181, 116, 0.2)",
-                    },
-                ),
-                dbc.Button(
-                    [
-                        html.I(
-                            className="fas fa-trash-alt", style={"marginRight": "10px"}
-                        ),
-                        "Сбросить все",
-                    ],
-                    id="btn-reset-all-filters",
-                    style={
-                        "width": "100%",
-                        "backgroundColor": "transparent",
-                        "border": "2px solid #E11D48",
-                        "color": "#E11D48",
-                        "borderRadius": "16px",
-                        "padding": "14px",
-                        "fontWeight": "600",
-                        "marginTop": "10px",
-                    },
-                ),
+                        dbc.Button([html.I(className="fas fa-check", style={"marginRight": "10px"}), "Применить фильтры"], id="btn-apply-filters", n_clicks=0, style={"width": "100%", "backgroundColor": "#01B574", "border": "none", "borderRadius": "16px", "padding": "14px", "fontWeight": "600", "marginTop": "5px", "boxShadow": "0px 10px 20px rgba(1, 181, 116, 0.2)"}),
+                        dbc.Button([html.I(className="fas fa-trash-alt", style={"marginRight": "10px"}), "Сбросить все"], id="btn-reset-all-filters", n_clicks=0, style={"width": "100%", "backgroundColor": "transparent", "border": "2px solid #E11D48", "color": "#E11D48", "borderRadius": "16px", "padding": "14px", "fontWeight": "600", "marginTop": "10px"}),
+                    ]
+                )
             ],
         ),
+
         html.Div(
-            style={"marginLeft": "340px", "padding": "40px 50px", "minHeight": "100vh"},
+            id="main-content",
+            style={
+                "marginLeft": "340px", 
+                "padding": "40px 50px", 
+                "minHeight": "100vh",
+                "transition": "all 0.3s ease"
+            },
             children=[
                 dbc.Row(
                     [
                         dbc.Col(
-                            html.H2(
-                                ["Дашборд мониторинг"],
-                                style={
-                                    "fontWeight": "800",
-                                    "color": "var(--text-main)",
-                                    "letterSpacing": "-0.5px",
-                                    "margin": 0,
-                                },
+                            html.Div(
+                                style={"display": "flex", "alignItems": "center"},
+                                children=[
+                                    html.Img(
+                                        id="main-header-logo",
+                                        src=CUSTOM_ICON,
+                                        style={
+                                            "height": "0px",
+                                            "opacity": "0",
+                                            "transition": "all 0.3s ease",
+                                            "marginRight": "0px",
+                                        }
+                                    ),
+                                    html.H2(
+                                        ["Дашборд мониторинг"],
+                                        style={
+                                            "fontWeight": "800",
+                                            "color": "var(--text-main)",
+                                            "letterSpacing": "-0.5px",
+                                            "margin": 0,
+                                        },
+                                    ),
+                                ]
                             ),
                             width=6,
                         ),
@@ -2914,6 +2777,7 @@ def update_table_only(
             "paginationPageSize": 15,
             "rowGroupPanelShow": "always",
             "sideBar": True,
+            "rowHoverHighlight": True,
         },
         style={"height": "650px", "width": "100%", "borderRadius": "12px"},
     )
@@ -3118,6 +2982,7 @@ def update_abc_analysis(
             "localeText": AG_GRID_LOCALE_RU,
             "pagination": True,
             "paginationPageSize": 20,
+            "rowHoverHighlight": True,
         },
         style={
             "height": "600px",
@@ -3173,13 +3038,14 @@ def drilldown_modal(
 
     if clickData and trigger_id == "filtered-click-data":
         point = clickData["points"][0]
-        custom_info = str(point.get("customdata", ""))
-        if custom_info.startswith("SQL"):
-            return (
-                True,
-                "Информация",
-                html.Div("Детализация доступна только в стандартном режиме."),
-            )
+        raw_customdata = point.get("customdata", "")
+        if isinstance(raw_customdata, list):
+            custom_info = str(raw_customdata[0]) 
+        else:
+            custom_info = str(raw_customdata)
+            
+        if custom_info.startswith("SQL"): 
+            return True, "Информация", html.Div("Детализация доступна только в стандартном режиме.")
 
         clicked_date = point["x"]
         clicked_group = custom_info.split("|")[1] if "|" in custom_info else custom_info
@@ -4704,6 +4570,79 @@ app.clientside_callback(
     Output("interactive-grid", "exportDataAsCsv"),
     Input("btn-export-grid", "n_clicks"),
     prevent_initial_call=True,
+)
+
+app.clientside_callback(
+    """
+    function(n_clicks, side_style, main_style, head_style, logo_side_style, logo_main_style) {
+        if (!n_clicks) return [window.dash_clientside.no_update, window.dash_clientside.no_update, window.dash_clientside.no_update, window.dash_clientside.no_update, window.dash_clientside.no_update, window.dash_clientside.no_update, window.dash_clientside.no_update];
+        
+        let next_side = {...side_style};
+        let next_main = {...main_style};
+        let next_head = {...head_style};
+        let next_logo_side = {...logo_side_style};
+        let next_logo_main = {...logo_main_style};
+        let next_content = {};
+        let next_icon = "";
+        
+        if (next_side.width === "340px" || !next_side.width) {
+            // 1. Сворачиваем сайдбар
+            next_side.width = "85px";
+            next_side.padding = "40px 10px";
+            next_main.marginLeft = "85px";
+            next_head.flexDirection = "column";
+            next_head.gap = "20px";
+            next_content = {"display": "none"};
+            next_icon = "fas fa-chevron-right";
+
+            next_logo_side.opacity = "0";
+            next_logo_side.width = "0px";
+            
+            next_logo_main.opacity = "1";
+            next_logo_main.height = "55px"; // Делаем иконку крупнее
+            next_logo_main.marginRight = "20px";
+        } else {
+            // 1. Разворачиваем сайдбар обратно
+            next_side.width = "340px";
+            next_side.padding = "40px 30px";
+            next_main.marginLeft = "340px";
+            next_head.flexDirection = "row";
+            next_head.gap = "0px";
+            next_content = {"display": "block"};
+            next_icon = "fas fa-chevron-left";
+            
+            // 2. Возвращаем лого в сайдбар, прячем из заголовка
+            next_logo_side.opacity = "1";
+            next_logo_side.width = "100%";
+            
+            next_logo_main.opacity = "0";
+            next_logo_main.height = "0px";
+            next_logo_main.marginRight = "0px";
+        }
+
+        setTimeout(() => { window.dispatchEvent(new Event('resize')); }, 310);
+        
+        return [next_side, next_main, next_content, next_icon, next_head, next_logo_side, next_logo_main];
+    }
+    """,
+    [
+        Output("sidebar", "style"),
+        Output("main-content", "style"),
+        Output("sidebar-content", "style"),
+        Output("sidebar-arrow-icon", "className"),
+        Output("sidebar-header-row", "style"),
+        Output("sidebar-logo-container", "style"),
+        Output("main-header-logo", "style")
+    ],
+    Input("btn-toggle-sidebar", "n_clicks"),
+    [
+        State("sidebar", "style"),
+        State("main-content", "style"),
+        State("sidebar-header-row", "style"),
+        State("sidebar-logo-container", "style"),
+        State("main-header-logo", "style")
+    ],
+    prevent_initial_call=True
 )
 
 
