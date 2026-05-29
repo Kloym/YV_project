@@ -3518,9 +3518,12 @@ def drilldown_modal(
         Output("yoy-modal-body", "children"),
         Output("f-yoy", "value", allow_duplicate=True),
     ],
-    [Input("f-yoy", "value"), Input("close-yoy-modal", "n_clicks")],
     [
-        State("yoy-modal", "is_open"),
+        Input("f-yoy", "value"), 
+        Input("close-yoy-modal", "n_clicks"),
+        Input("yoy-modal", "is_open")
+    ],
+    [
         State("f-year", "value"),
         State("f-quarter", "value"),
         State("f-month", "value"),
@@ -3544,10 +3547,16 @@ def toggle_yoy_comparison(
     patient,
 ):
     ctx = dash.callback_context
+    if not ctx.triggered:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        
     trig = ctx.triggered[0]["prop_id"].split(".")[0]
-
-    if trig == "close-yoy-modal":
+    if trig == "close-yoy-modal" or (trig == "yoy-modal" and not is_open):
         return False, dash.no_update, dash.no_update, []
+    
+    if trig == "f-yoy" and not (yoy_val and True in yoy_val):
+        return False, dash.no_update, dash.no_update, dash.no_update
+
     if trig == "f-yoy" and yoy_val and True in yoy_val:
         df = get_optimized_data()
         if df.empty:
