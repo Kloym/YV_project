@@ -249,6 +249,118 @@ app.index_string = r"""
                 animation: pulse-green 2s infinite;
             }
 
+            .rocket-easter-egg {
+                position: fixed;
+                bottom: -200px;
+                left: -200px;
+                z-index: 9999;
+                pointer-events: none;
+                display: flex;
+                align-items: center;
+                opacity: 0;
+                transform: rotate(-45deg);
+            }
+
+            @keyframes epic-launch {
+                0%   { bottom: -50px; left: -50px; opacity: 1; transform: rotate(-45deg) translate(0, 0); }
+                2%   { bottom: -50px; left: -50px; opacity: 1; transform: rotate(-45deg) translate(-10px, 10px); }
+                4%   { bottom: -50px; left: -50px; opacity: 1; transform: rotate(-45deg) translate(10px, -10px); }
+                6%   { bottom: -50px; left: -50px; opacity: 1; transform: rotate(-45deg) translate(-12px, 5px); }
+                8%   { bottom: -50px; left: -50px; opacity: 1; transform: rotate(-45deg) translate(12px, -5px); }
+                10%  { bottom: -50px; left: -50px; opacity: 1; transform: rotate(-45deg) translate(-8px, 12px); }
+                12%  { bottom: -50px; left: -50px; opacity: 1; transform: rotate(-45deg) translate(8px, -12px); }
+                14%  { bottom: -50px; left: -50px; opacity: 1; transform: rotate(-45deg) translate(-15px, 0px); }
+                16%  { bottom: -50px; left: -50px; opacity: 1; transform: rotate(-45deg) translate(15px, 0px); }
+                18%  { bottom: -50px; left: -50px; opacity: 1; transform: rotate(-45deg) translate(-5px, 5px); }
+                20%  { bottom: -50px; left: -50px; opacity: 1; transform: rotate(-45deg) translate(0, 0); }
+                100% { bottom: 120vh; left: 120vw; opacity: 1; transform: rotate(-45deg) translate(0, 0); }
+            }
+
+            .rocket-easter-egg.launch {
+                animation: epic-launch 10s linear forwards;
+            }
+
+            .rocket-flame {
+                width: 60px;
+                height: 30px;
+                background: linear-gradient(to left, #FF7D00, #E11D48, transparent);
+                border-radius: 50%;
+                margin-right: -10px;
+                animation: flicker 0.1s infinite alternate;
+            }
+
+            @keyframes flicker {
+                0% { transform: scaleX(1); opacity: 0.8; }
+                100% { transform: scaleX(1.4); opacity: 1; }
+            }
+
+            .godzilla-easter-egg {
+                position: fixed;
+                bottom: 10px;
+                right: -300px;
+                z-index: 9998;
+                pointer-events: none;
+                display: flex;
+                align-items: flex-end;
+                opacity: 0;
+            }
+
+            .godzilla-icon {
+                font-size: 300px;
+                color: #1A5227;
+                transform: scaleX(-1) rotate(35deg);
+                transform-origin: bottom right;
+                filter: drop-shadow(-15px 15px 20px rgba(0,0,0,0.6));
+            }
+
+            @keyframes heavy-stomp {
+                0%   { transform: scaleX(-1) rotate(35deg) translateY(0); }
+                50%  { transform: scaleX(-1) rotate(25deg) translateY(-25px); }
+                100% { transform: scaleX(-1) rotate(35deg) translateY(0); }
+            }
+
+            .godzilla-easter-egg.launch .godzilla-icon {
+                animation: heavy-stomp 1.5s infinite ease-in-out; 
+            }
+
+            .roar-bubble {
+                opacity: 0;
+                background: #E11D48;
+                color: white;
+                padding: 15px 25px;
+                border-radius: 20px;
+                font-weight: 900;
+                font-size: 30px;
+                margin-bottom: 200px;
+                margin-right: -40px;
+                box-shadow: 0 10px 25px rgba(225, 29, 72, 0.5);
+                border: 4px solid #ffffff;
+            }
+
+            @keyframes godzilla-walk {
+                0%   { right: -300px; opacity: 1; transform: translateY(0); }
+                20%  { right: 15vw; opacity: 1; transform: translateY(-15px); }
+                40%  { right: 40vw; opacity: 1; transform: translateY(0); }
+                45%  { right: 45vw; opacity: 1; transform: scale(1.5) translateY(0); }
+                55%  { right: 45vw; opacity: 1; transform: scale(1.5) translateY(0); }
+                60%  { right: 55vw; opacity: 1; transform: translateY(-15px); }
+                80%  { right: 85vw; opacity: 1; transform: translateY(0); }
+                100% { right: 120vw; opacity: 1; transform: translateY(0); }
+            }
+
+            @keyframes roar-pop {
+                0%, 43% { opacity: 0; transform: scale(0.5); }
+                45%, 53% { opacity: 1; transform: scale(1); }
+                55%, 100% { opacity: 0; transform: scale(0.5); }
+            }
+
+            .godzilla-easter-egg.launch {
+                animation: godzilla-walk 12s linear forwards;
+            }
+            .godzilla-easter-egg.launch .roar-bubble {
+                animation: roar-pop 12s linear forwards;
+            }
+
             body { background-color: var(--bg-color); color: var(--text-main); font-family: 'Inter', sans-serif; transition: background-color 0.4s ease, color 0.4s ease; margin: 0; }
             .Select, .Select-value { background-color: transparent !important; }
             .Select-control { background-color: var(--card-bg) !important; border: 2px solid var(--grid-color) !important; border-radius: 16px !important; box-shadow: none !important; padding: 4px 8px !important; }
@@ -1639,9 +1751,13 @@ app.layout = html.Div(
                                                                         [
                                                                             html.I(
                                                                                 className="fas fa-lightbulb",
+                                                                                id="easter-egg-trigger",
+                                                                                n_clicks=0,
                                                                                 style={
                                                                                     "marginRight": "8px",
                                                                                     "color": "#FF7D00",
+                                                                                    "cursor": "default",
+                                                                                    "transition": "transform 0.2s",
                                                                                 },
                                                                             ),
                                                                             html.Span(
@@ -2493,6 +2609,45 @@ app.layout = html.Div(
             is_open=False,
             size="lg",
             centered=True,
+        ),
+        html.Div(
+            id="rocket-container",
+            className="rocket-easter-egg",
+            children=[
+                html.Div(
+                    "Вот так выглядят успехи нашей больницы! 🚀",
+                    style={
+                        "fontSize": "22px",
+                        "fontWeight": "900",
+                        "color": "#ffffff",
+                        "backgroundColor": "var(--primary)",
+                        "padding": "12px 30px",
+                        "borderRadius": "8px",
+                        "border": "3px dashed #ffffff",
+                        "boxShadow": "0 10px 25px rgba(0,0,0,0.4)",
+                        "marginRight": "15px",
+                        "whiteSpace": "nowrap"
+                    }
+                ),
+                html.Div(className="rocket-flame"),
+                html.I(
+                    className="fas fa-rocket", 
+                    style={
+                        "fontSize": "110px", 
+                        "color": "#E11D48", 
+                        "transform": "rotate(45deg)", 
+                        "filter": "drop-shadow(5px 5px 10px rgba(0,0,0,0.3))"
+                    }
+                )
+            ]
+        ),
+        html.Div(
+            id="godzilla-container",
+            className="godzilla-easter-egg",
+            children=[
+                html.Div("ROOOAAAR! 📉", className="roar-bubble"),
+                html.I(className="fas fa-dragon godzilla-icon")
+            ]
         ),
     ]
 )
@@ -4799,6 +4954,32 @@ def toggle_help_modal(n1, n2, is_open):
     if n1 or n2:
         return not is_open
     return is_open
+
+app.clientside_callback(
+    """
+    function(n_clicks) {
+        if (n_clicks > 0) {
+            var rocket = document.getElementById('rocket-container');
+            if (rocket) {
+                rocket.classList.remove('launch');
+                void rocket.offsetWidth; 
+                rocket.classList.add('launch');
+            }
+
+            var godzilla = document.getElementById('godzilla-container');
+            if (godzilla) {
+                godzilla.classList.remove('launch');
+                void godzilla.offsetWidth; 
+                godzilla.classList.add('launch');
+            }
+        }
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("easter-egg-trigger", "className"),
+    Input("easter-egg-trigger", "n_clicks"),
+    prevent_initial_call=True
+)
 
 
 def open_browser():
