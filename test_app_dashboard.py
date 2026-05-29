@@ -1102,6 +1102,41 @@ def build_where_clause(
 # --- ВЕРСТКА ИНТЕРФЕЙСА ---
 app.layout = html.Div(
     [
+        dcc.Interval(
+        id='update-interval',
+        interval=60 * 1000,
+        n_intervals=0
+        ),
+
+        dbc.Toast(
+            [
+                html.P(
+                    "Вышло обновление, закройте программу и запустите обновленную программу в папке Обновление", 
+                    className="mb-0", 
+                    style={"fontSize": "14px", "fontWeight": "600", "color": "var(--text-main)", "lineHeight": "1.5"}
+                )
+            ],
+            id="update-toast",
+            header=html.Div([
+                html.I(className="fas fa-info-circle", style={"color": "#FF7D00", "marginRight": "8px", "fontSize": "16px"}),
+                html.Span("Внимание", style={"fontWeight": "800", "color": "var(--text-main)"})
+            ]),
+            is_open=False,
+            dismissable=True,
+            duration=None,
+            style={
+                "position": "fixed",
+                "top": "50%",
+                "left": "50%",
+                "transform": "translate(-50%, -50%)",
+                "width": "380px",
+                "zIndex": 99999, 
+                "backgroundColor": "var(--card-bg)",
+                "boxShadow": "0 25px 50px rgba(0,0,0,0.5)",
+                "borderRadius": "12px",
+                "border": "2px solid #FF7D00"
+            }
+        ),
         dcc.Store(id="theme-store", data="light"),
         dcc.Store(id="presets-store", storage_type="local", data={}),
         dcc.Store(id="filtered-click-data"),
@@ -4989,6 +5024,28 @@ app.clientside_callback(
     Input("easter-egg-trigger", "n_clicks"),
     prevent_initial_call=True
 )
+
+@app.callback(
+    Output("update-toast", "is_open"),
+    Input("update-interval", "n_intervals"),
+    State("update-toast", "is_open"),
+    prevent_initial_call=False
+)
+def check_for_updates(n, is_currently_open):
+    if is_currently_open:
+        return dash.no_update
+        
+    update_dir = "Обновление"
+    
+    try:
+        if os.path.exists(update_dir) and os.path.isdir(update_dir):
+            files = os.listdir(update_dir)
+            if any(f.lower().endswith('.exe') for f in files):
+                return True
+    except Exception:
+        pass
+        
+    return dash.no_update
 
 
 def open_browser():
