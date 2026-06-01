@@ -28,6 +28,8 @@ THEME_COLORS = {
     "dark": {"text": "#F8FAFC", "grid": "#334155", "card": "#1E293B"},
 }
 
+CURRENT_APP_VERSION = "Версия 1.2.0 (Минорное обновление)"
+
 def profile_to_txt(filename):
     def decorator(func):
         @wraps(func)
@@ -1319,7 +1321,6 @@ def build_where_clause(
         conditions.append(f"CAST(\"Номер ИБ\" AS VARCHAR) ILIKE '%{safe_pat}%'")
     return " AND ".join(conditions)
 
-
 # --- ВЕРСТКА ИНТЕРФЕЙСА ---
 app.layout = html.Div(
     [
@@ -1362,6 +1363,43 @@ app.layout = html.Div(
         dcc.Store(id="presets-store", storage_type="local", data={}),
         dcc.Store(id="filtered-click-data"),
         dcc.Store(id="filtered-selected-data"),
+    
+        dcc.Store(id="app-version-store", storage_type="local"),
+        dbc.Modal(
+            [
+                dbc.ModalHeader(
+                    dbc.ModalTitle(
+                        [html.I(className="fas fa-gift", style={"color": "#FF7D00", "marginRight": "10px"}), "Что нового в этой версии?"],
+                        style={"fontWeight": "900", "color": "var(--primary)"}
+                    ),
+                    close_button=True
+                ),
+                dbc.ModalBody(
+                    [
+                        html.H5(CURRENT_APP_VERSION, style={"fontWeight": "800", "color": "var(--text-main)", "marginBottom": "15px"}),
+                        html.Ul([
+                            html.Li([html.B("Быстрый переход к пациенту: "), "В таблице на вкладке «Улучшенная аналитика» (под тепловой картой) теперь можно кликнуть на номер истории болезни (ИБ), чтобы моментально открыть детальную карточку пациента."]),
+                            html.Li([html.B("Сравнение (PoP): "), "Улучшена панель сравнения периодов — теперь можно точечно выбирать конкретные месяцы для аналитики. (Находится в самом низу колонки фильтры, под Расширенными фильтрами)"]),
+                            html.Li([html.B("Изменения в дизайне: "), "Колонка фильтров теперь сворачивается, что позволяет увеличить график. Изменена палитра цветов Дашборда. Некоторые фильтры перенесены в 'Расширенные фильтры'."]),
+                            html.Li([html.B("Оптимизация: "), "Приложение теперь работает стабильнее, быстрее загружает графики и занимает меньше места!"]),
+                        ], style={"lineHeight": "1.8", "fontSize": "15px", "color": "var(--text-main)"}),
+                        
+                        html.Div(
+                            "Это окно появляется только один раз после обновления. Приятной работы! 💙",
+                            style={"marginTop": "20px", "padding": "15px", "backgroundColor": "rgba(14, 165, 233, 0.1)", "borderRadius": "10px", "color": "var(--primary)", "fontWeight": "600", "fontSize": "13px"}
+                        )
+                    ],
+                    style={"padding": "25px", "backgroundColor": "var(--bg-color)"}
+                ),
+                dbc.ModalFooter(
+                    dbc.Button("Понятно, спасибо!", id="btn-close-changelog", className="ms-auto", style={"backgroundColor": "#01B574", "border": "none", "borderRadius": "12px", "fontWeight": "600", "padding": "10px 20px"})
+                ),
+            ],
+            id="changelog-modal",
+            is_open=False,
+            size="lg",
+            centered=True,
+        ),
 
         html.Div(
             id="sidebar",
@@ -4175,14 +4213,18 @@ def toggle_yoy_comparison(
         Output("f-mes", "value"),
         Output("f-patient", "value"),
         Output("f-yoy", "value"),
+        Output("pop-a-year", "value"),
+        Output("pop-a-month", "value"),
+        Output("pop-b-year", "value"),
+        Output("pop-b-month", "value"),
     ],
     [Input("btn-reset-all-filters", "n_clicks")],
     prevent_initial_call=True,
 )
 def clear_all_filter_inputs(n_clicks):
     if n_clicks:
-        return None, None, None, None, None, None, "", []
-    return dash.no_update
+        return None, None, None, None, None, None, "", [], None, None, None, None
+    return [dash.no_update] * 12
 
 
 @app.callback(
@@ -5284,19 +5326,38 @@ def fill_pop_dropdowns(_):
     return opts_y, opts_y, opts_m, opts_m
 
 @app.callback(
-    [Output("pop-modal", "is_open"), Output("pop-modal-title", "children"), Output("pop-modal-body", "children")],
-    [Input("btn-run-pop", "n_clicks"), Input("close-pop-modal", "n_clicks")],
-    [State("pop-a-year", "value"), State("pop-a-month", "value"),
-     State("pop-b-year", "value"), State("pop-b-month", "value"),
-     State("pop-modal", "is_open")],
+    [
+        Output("pop-modal", "is_open"), 
+        Output("pop-modal-title", "children"), 
+        Output("pop-modal-body", "children"),
+        Output("pop-a-month", "value", allow_duplicate=True),
+        Output("pop-b-month", "value", allow_duplicate=True) 
+    ],
+    [
+        Input("btn-run-pop", "n_clicks"), 
+        Input("close-pop-modal", "n_clicks"),
+        Input("pop-modal", "is_open")
+    ],
+    [
+        State("pop-a-year", "value"), State("pop-a-month", "value"),
+        State("pop-b-year", "value"), State("pop-b-month", "value")
+    ],
     prevent_initial_call=True,
 )
-def run_pop(n_run, n_close, y_a, m_a, y_b, m_b, is_open):
-    trig = dash.callback_context.triggered[0]["prop_id"].split(".")[0]
-    if trig == "close-pop-modal": 
-        return False, dash.no_update, dash.no_update
+def run_pop(n_run, n_close, is_open, y_a, m_a, y_b, m_b):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+
+    trig = ctx.triggered[0]["prop_id"].split(".")[0]
+    if trig == "close-pop-modal" or (trig == "pop-modal" and not is_open):
+        return False, dash.no_update, dash.no_update, None, None
+
+    if trig == "pop-modal" and is_open:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+
     if not y_a or not y_b:
-        return True, "Сравнение периодов", html.Div("Пожалуйста, выберите хотя бы года для обоих периодов.")
+        return True, "Сравнение периодов", html.Div("Пожалуйста, выберите хотя бы года для обоих периодов."), dash.no_update, dash.no_update
 
     base_filters = ((y_a,) if y_a else None, None, (m_a,) if m_a else None)
     comp_filters = ((y_b,) if y_b else None, None, (m_b,) if m_b else None)
@@ -5307,7 +5368,36 @@ def run_pop(n_run, n_close, y_a, m_a, y_b, m_b, is_open):
     label_b = f"{m_b or 'Весь год'} {y_b}"
     
     body = render_pop_result(result, label_a, label_b)
-    return True, "Сравнение периодов (PoP)", body
+    
+    return True, "Сравнение периодов (PoP)", body, dash.no_update, dash.no_update
+
+@app.callback(
+    [
+        Output("changelog-modal", "is_open"),
+        Output("app-version-store", "data")
+    ],
+    [
+        Input("app-version-store", "data"),
+        Input("btn-close-changelog", "n_clicks"),
+        Input("changelog-modal", "is_open")
+    ],
+    prevent_initial_call=True
+)
+def handle_changelog(stored_version, n_clicks, is_open):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return dash.no_update, dash.no_update
+
+    trig = ctx.triggered[0]["prop_id"].split(".")[0]
+
+    if trig == "btn-close-changelog" or (trig == "changelog-modal" and not is_open):
+        return False, CURRENT_APP_VERSION
+
+    if trig == "app-version-store" or trig == "":
+        if stored_version != CURRENT_APP_VERSION:
+            return True, dash.no_update
+
+    return dash.no_update, dash.no_update
 
 def open_browser():
     webbrowser.open_new("http://127.0.0.1:8050")
