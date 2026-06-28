@@ -1800,6 +1800,24 @@ app.layout = html.Div(
                                                                                 },
                                                                             ),
                                                                             html.Button(
+                                                                                [html.I(className="fas fa-list-ul", style={"marginRight": "6px"}), "Сводка МЭС"],
+                                                                                id="btn-show-mes-breakdown",
+                                                                                className="no-print",
+                                                                                style={
+                                                                                    "background": "var(--chip-bg)",
+                                                                                    "border": "1px solid var(--chip-border)",
+                                                                                    "color": "var(--chip-text)",
+                                                                                    "borderRadius": "999px",
+                                                                                    "padding": "4px 14px",
+                                                                                    "fontWeight": "700",
+                                                                                    "cursor": "pointer",
+                                                                                    "fontSize": "12px",
+                                                                                    "marginLeft": "15px",
+                                                                                    "transition": "all 0.2s"
+                                                                                },
+                                                                            style={"display": "flex", "alignItems": "center"}
+                                                                            ),
+                                                                            html.Button(
                                                                                 [
                                                                                     html.I(
                                                                                         className="fas fa-sync-alt",
@@ -2657,6 +2675,26 @@ app.layout = html.Div(
             [
                 dbc.ModalHeader(
                     dbc.ModalTitle(
+                        [html.I(className="fas fa-file-medical-alt", style={"marginRight": "10px"}), "Детализация МЭС по периодам"], 
+                        style={"fontWeight": "800", "color": "var(--primary)"}
+                    )
+                ),
+                dbc.ModalBody(id="mes-breakdown-body", style={"padding": "25px", "backgroundColor": "var(--bg-color)"}),
+                dbc.ModalFooter(
+                    dbc.Button("Закрыть", id="close-mes-breakdown", className="ms-auto", style={"borderRadius": "12px"})
+                ),
+            ],
+            id="mes-breakdown-modal",
+            is_open=False,
+            size="lg",
+            centered=True,
+            scrollable=True,
+        ),
+
+        dbc.Modal(
+            [
+                dbc.ModalHeader(
+                    dbc.ModalTitle(
                         [
                             html.I(
                                 className="fas fa-code", style={"marginRight": "10px"}
@@ -3034,6 +3072,97 @@ def update_smart_filters(years, quarters, months, depts, profiles, mes_list, pat
 
     return [opts_year, opts_quarter, opts_month, opts_dept, opts_profile, opts_mes]
 
+# Модалка по МЭСам, детализация их текстом
+@app.callback(
+    [
+        Output("mes-breakdown-modal", "is_open"),
+        Output("mes-breakdown-body", "children")
+    ],
+    [
+        Input("btn-show-mes-breakdown", "n_clicks"),
+        Input("close-mes-breakdown", "n_clicks")
+    ],
+    [
+        State("mes-breakdown-modal", "is_open"),
+        State("f-year", "value"),
+        State("f-quarter", "value"),
+        State("f-month", "value"),
+        State("f-dept", "value"),
+        State("f-profile", "value"),
+        State("f-mes", "value"),
+        State("f-patient", "value")
+    ],
+    prevent_initial_call=True
+)
+def toggle_mes_breakdown(n_open, n_close, is_open, years, quarters, months, depts, profiles, mes_list, patient):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return dash.no_update, dash.no_update
+    
+    trigger_id = ctx.triggered[0]["prop_id"].split(".")[0]
+    if trigger_id == "close-mes-breakdown" or (trigger_id == "mes-breakdown-modal" and not is_open):
+        return False, dash.no_update
+        
+    if trigger_id == "btn-show-mes-breakdown":
+        df = get_optimized_data()
+        if df.empty:
+            return True, html.Div("Нет данных в базе", style={"fontWeight": "bold", "color": "#E11D48"})
+            
+        where_clause = build_where_clause(
+            to_tuple(years), to_tuple(quarters), to_tuple(months), 
+            to_tuple(depts), to_tuple(profiles), to_tuple(mes_list), patient
+        )
+        
+        with duck_connection(df) as conn:
+            query = f"""
+                SELECT Month_Str, "Код Услуги", COUNT(*) as cnt
+                FROM (
+                    SELECT DISTINCT "Номер ИБ", "Код Услуги", Month_Str
+                    FROM df 
+                    WHERE {where_clause}
+                )
+                GROUP BY Month_Str, "Код Услуги"
+                ORDER BY Month_Str, cnt DESC
+            """
+            res = conn.execute(query).df()
+            
+        if res.empty:
+            return True, html.Div("Нет данных по выбранным фильтрам.", style={"color": "var(--text-muted)", "fontWeight": "600"})
+        
+        content = []
+        for period, group in res.groupby("Month_Str", sort=False):
+            try:
+                y, m = period.split("-")
+                period_name = f"{MONTHS_RU[int(m)]} {y}"
+            except:
+                period_name = period
+                
+            mes_items = []
+            for _, row in group.iterrows():
+                mes_items.append(
+                    html.Div([
+                        html.Span(f"{row['Код Услуги']}: ", style={"fontWeight": "600", "color": "var(--text-main)"}),
+                        html.Span(f"{row['cnt']} ед.", style={"color": "var(--primary)", "fontWeight": "800", "float": "right"})
+                    ], style={"padding": "8px 0", "borderBottom": "1px dashed var(--grid-color)", "display": "flex", "justifyContent": "space-between"})
+                )
+                
+            content.append(html.Div([
+                html.H5(period_name, style={
+                    "color": "var(--text-main)", 
+                    "fontWeight": "800", 
+                    "marginTop": "20px", 
+                    "borderLeft": "4px solid var(--primary)", 
+                    "paddingLeft": "10px",
+                    "backgroundColor": "var(--bg-soft)",
+                    "padding": "8px 12px",
+                    "borderRadius": "0 8px 8px 0"
+                }),
+                html.Div(mes_items, style={"marginLeft": "15px", "marginBottom": "20px"})
+            ]))
+            
+        return True, html.Div(content)
+        
+    return dash.no_update, dash.no_update
 
 # 🚀 1. ВКЛАДКА 1 С ЧИПАМИ ФИЛЬТРОВ И DISTINCT СУММАМИ
 @app.callback(
@@ -5477,6 +5606,17 @@ app.clientside_callback(
     """,
     Output("btn-force-update", "className"),
     Input("btn-force-update", "n_clicks"),
+    prevent_initial_call=True
+)
+
+app.clientside_callback(
+    """
+    function(n_clicks) {
+        return null;
+    }
+    """,
+    Output("main-line-chart", "clickData"),
+    Input("close-modal", "n_clicks"),
     prevent_initial_call=True
 )
 
