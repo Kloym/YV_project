@@ -3111,23 +3111,47 @@ def toggle_mes_breakdown(n_open, n_close, is_open, years, quarters, months, dept
             for _, row in group.iterrows():
                 mes_items.append(
                     html.Div([
-                        html.Span(f"{row['Код Услуги']}: ", style={"fontWeight": "600", "color": "var(--text-main)"}),
-                        html.Span(f"{row['cnt']} ед.", style={"color": "var(--primary)", "fontWeight": "800", "float": "right"})
-                    ], style={"padding": "8px 0", "borderBottom": "1px dashed var(--grid-color)", "display": "flex", "justifyContent": "space-between"})
+                        html.Span(f"{row['Код Услуги']}", style={
+                            "fontWeight": "700", 
+                            "color": "var(--text-main)", 
+                            "marginRight": "8px", 
+                            "fontSize": "13px"
+                        }),
+                        html.Span(f"{row['cnt']} ед.", style={
+                            "color": "#ffffff", 
+                            "backgroundColor": "var(--primary)", 
+                            "fontWeight": "600",
+                            "fontSize": "12px",
+                            "padding": "3px 8px",
+                            "borderRadius": "6px",
+                            "letterSpacing": "0.3px"
+                        })
+                    ], style={
+                        "display": "inline-flex", 
+                        "alignItems": "center", 
+                        "padding": "6px 12px", 
+                        "backgroundColor": "var(--card-bg)", 
+                        "border": "1px solid var(--grid-color)", 
+                        "borderRadius": "8px",
+                        "boxShadow": "0 2px 4px rgba(0,0,0,0.02)"
+                    })
                 )
-                
+
             content.append(html.Div([
-                html.H5(period_name, style={
+                html.H6(period_name, style={
                     "color": "var(--text-main)", 
                     "fontWeight": "800", 
-                    "marginTop": "20px", 
-                    "borderLeft": "4px solid var(--primary)", 
-                    "paddingLeft": "10px",
-                    "backgroundColor": "var(--bg-soft)",
-                    "padding": "8px 12px",
-                    "borderRadius": "0 8px 8px 0"
+                    "fontSize": "15px",
+                    "marginBottom": "12px",
+                    "borderBottom": "2px solid var(--grid-color)",
+                    "paddingBottom": "8px"
                 }),
-                html.Div(mes_items, style={"marginLeft": "15px", "marginBottom": "20px"})
+                html.Div(mes_items, style={
+                    "display": "flex", 
+                    "flexWrap": "wrap",
+                    "gap": "8px", 
+                    "marginBottom": "30px"
+                })
             ]))
             
         return True, html.Div(content)
@@ -5202,8 +5226,8 @@ app.clientside_callback(
 app.clientside_callback(
     """
     function(clickData) {
-        if (!clickData) return window.dash_clientside.no_update;
-        // Игнорируем обычный клик, если зажат Shift
+        if (!clickData) return null; 
+
         if (window.isShiftPressed) {
             return window.dash_clientside.no_update;
         }
@@ -5581,12 +5605,30 @@ app.clientside_callback(
 
 app.clientside_callback(
     """
-    function(n_clicks) {
-        return null;
+    function(is_open, active_tab) {
+        const ctx = dash_clientside.callback_context;
+        if (!ctx.triggered.length) return window.dash_clientside.no_update;
+        
+        const trig = ctx.triggered[0].prop_id;
+        
+        // Если модалка закрылась (крестиком, кликом по фону, кнопкой или Esc)
+        if (trig === "drilldown-modal.is_open" && is_open === false) {
+            return null;
+        }
+        
+        // Если переключили вкладку
+        if (trig === "main-tabs.active_tab") {
+            return null;
+        }
+        
+        return window.dash_clientside.no_update;
     }
     """,
     Output("main-line-chart", "clickData"),
-    Input("close-modal", "n_clicks"),
+    [
+        Input("drilldown-modal", "is_open"),
+        Input("main-tabs", "active_tab")
+    ],
     prevent_initial_call=True
 )
 
