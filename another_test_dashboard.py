@@ -1790,113 +1790,83 @@ app.layout = html.Div(
                                                                 [
                                                                     html.Div(
                                                                         [
-                                                                            html.H4(
-                                                                                "Аналитика по времени",
-                                                                                id="main-chart-title",
-                                                                                style={
-                                                                                    "fontWeight": "800",
-                                                                                    "color": "var(--text-main)",
-                                                                                    "margin": "0",
-                                                                                },
-                                                                            ),
-                                                                            html.Button(
-                                                                                [html.I(className="fas fa-list-ul", style={"marginRight": "6px"}), "Сводка МЭС"],
-                                                                                id="btn-show-mes-breakdown",
-                                                                                className="no-print",
-                                                                                style={
-                                                                                    "background": "var(--chip-bg)",
-                                                                                    "border": "1px solid var(--chip-border)",
-                                                                                    "color": "var(--chip-text)",
-                                                                                    "borderRadius": "999px",
-                                                                                    "padding": "4px 14px",
-                                                                                    "fontWeight": "700",
-                                                                                    "cursor": "pointer",
-                                                                                    "fontSize": "12px",
-                                                                                    "marginLeft": "15px",
-                                                                                    "transition": "all 0.2s"
-                                                                                },
-                                                                            style={"display": "flex", "alignItems": "center"}
+                                                                            html.Div(
+                                                                                [
+                                                                                    html.H4(
+                                                                                        "Аналитика по времени",
+                                                                                        id="main-chart-title",
+                                                                                        style={"fontWeight": "800", "color": "var(--text-main)", "margin": "0"},
+                                                                                    ),
+                                                                                    html.Button(
+                                                                                        [html.I(className="fas fa-list-ul", style={"marginRight": "6px"}), "Сводка МЭС"],
+                                                                                        id="btn-show-mes-breakdown",
+                                                                                        className="no-print",
+                                                                                        style={
+                                                                                            "background": "var(--chip-bg)", "border": "1px solid var(--chip-border)",
+                                                                                            "color": "var(--chip-text)", "borderRadius": "999px",
+                                                                                            "padding": "4px 14px", "fontWeight": "700",
+                                                                                            "cursor": "pointer", "fontSize": "12px",
+                                                                                            "marginLeft": "15px", "transition": "all 0.2s"
+                                                                                        },
+                                                                                    ),
+                                                                                ],
+                                                                                style={"display": "flex", "alignItems": "center"}
                                                                             ),
                                                                             html.Button(
                                                                                 [
-                                                                                    html.I(
-                                                                                        className="fas fa-sync-alt",
-                                                                                        style={
-                                                                                            "marginRight": "8px"
-                                                                                        },
-                                                                                    ),
+                                                                                    html.I(className="fas fa-sync-alt", style={"marginRight": "8px"}),
                                                                                     "Сбросить выделение",
                                                                                 ],
                                                                                 id="btn-reset-selection",
                                                                                 title="Вернуть цвета графику",
                                                                                 className="no-print",
                                                                                 style={
-                                                                                    "background": "var(--primary-light)",
-                                                                                    "border": "none",
-                                                                                    "color": "var(--primary)",
-                                                                                    "borderRadius": "8px",
-                                                                                    "padding": "6px 12px",
-                                                                                    "fontWeight": "600",
-                                                                                    "cursor": "pointer",
-                                                                                    "fontSize": "13px",
+                                                                                    "background": "var(--primary-light)", "border": "none",
+                                                                                    "color": "var(--primary)", "borderRadius": "8px",
+                                                                                    "padding": "6px 12px", "fontWeight": "600",
+                                                                                    "cursor": "pointer", "fontSize": "13px",
                                                                                 },
                                                                             ),
                                                                         ],
                                                                         style={
-                                                                            "display": "flex",
-                                                                            "justifyContent": "space-between",
-                                                                            "alignItems": "center",
-                                                                            "marginBottom": "15px",
+                                                                            "display": "flex", "justifyContent": "space-between",
+                                                                            "alignItems": "center", "marginBottom": "15px",
                                                                         },
                                                                     ),
                                                                     dcc.Loading(
                                                                         type="dot",
                                                                         color="var(--primary)",
                                                                         overlay_style={
-                                                                            "visibility": "visible",
-                                                                            "filter": "blur(2px)",
-                                                                            "opacity": 0.6,
-                                                                            "transition": "all 0.3s ease",
+                                                                            "visibility": "visible", "filter": "blur(2px)",
+                                                                            "opacity": 0.6, "transition": "all 0.3s ease",
                                                                         },
                                                                         children=[
                                                                             html.Div(
                                                                                 id="smart-insights-container",
                                                                                 style={
-                                                                                    "marginBottom": "20px",
-                                                                                    "padding": "16px 20px",
-                                                                                    "backgroundColor": "var(--primary-light)",
-                                                                                    "borderRadius": "14px",
+                                                                                    "marginBottom": "20px", "padding": "16px 20px",
+                                                                                    "backgroundColor": "var(--primary-light)", "borderRadius": "14px",
                                                                                     "border": "1px solid var(--grid-color)",
                                                                                 },
                                                                             ),
                                                                             dcc.Graph(
                                                                                 id="main-line-chart",
-                                                                                config={
-                                                                                    "displayModeBar": False
-                                                                                },
-                                                                                style={
-                                                                                    "height": "550px"
-                                                                                },
+                                                                                config={"displayModeBar": False},
+                                                                                style={"height": "550px"},
                                                                             ),
                                                                             html.Div(
                                                                                 id="active-filters-bar",
                                                                                 style={
-                                                                                    "marginTop": "10px",
-                                                                                    "display": "flex",
-                                                                                    "flexWrap": "wrap",
-                                                                                    "gap": "8px",
-                                                                                    "fontSize": "12px",
+                                                                                    "marginTop": "10px", "display": "flex",
+                                                                                    "flexWrap": "wrap", "gap": "8px", "fontSize": "12px",
                                                                                 },
                                                                             ),
                                                                         ],
                                                                     ),
                                                                 ],
                                                                 style={
-                                                                    "backgroundColor": "var(--card-bg)",
-                                                                    "borderRadius": "24px",
-                                                                    "padding": "35px",
-                                                                    "boxShadow": "var(--shadow)",
-                                                                    "marginBottom": "25px",
+                                                                    "backgroundColor": "var(--card-bg)", "borderRadius": "24px",
+                                                                    "padding": "35px", "boxShadow": "var(--shadow)", "marginBottom": "25px",
                                                                 },
                                                             ),
                                                             width=12,
