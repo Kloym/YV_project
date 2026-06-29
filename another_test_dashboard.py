@@ -250,7 +250,7 @@ def monitor_heartbeat():
             shutdown_server()
             break
 
-# threading.Thread(target=monitor_heartbeat, daemon=True).start()
+threading.Thread(target=monitor_heartbeat, daemon=True).start()
 
 # --- CSS СТИЛИ И КЛИЕНТСКИЙ JAVASCRIPT ---
 app.index_string = r"""
@@ -5638,5 +5638,5 @@ def open_browser():
 
 if __name__ == "__main__":
     Timer(1.5, open_browser).start()
-    threading.Thread(target=monitor_heartbeat, daemon=True).start()
+    # threading.Thread(target=monitor_heartbeat, daemon=True).start()
     app.run(debug=False, port=8050)
