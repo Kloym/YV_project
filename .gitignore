@@ -2,5 +2,7 @@ __pycache__/
 .vscode/
 table/
 venv/
+build_venv/
 cache-directory/
 database.db
+save_table/
